@@ -218,32 +218,40 @@ git clone https://github.com/your-org/eagle.git
 cd eagle
 ```
 
-### 2. Start infrastructure (Redis + backend)
+### 2. Configure environment variables
+
+Copy `.env.example` to `.env` and update the values before running the project.
+
+```bash
+cp .env.example .env
+```
+
+### 3. Start infrastructure (Redis + backend)
 
 ```bash
 docker-compose up -d
 ```
 
-### 3. Install Python dependencies
+### 4. Install Python dependencies
 
 ```bash
 cd services/detection
 pip install -r requirements.txt
 ```
 
-### 4. Pull the VLM model (local inference)
+### 5. Pull the VLM model (local inference)
 
 ```bash
 ollama pull llava:latest
 ```
 
-### 5. Run detection on a sample video
+### 6. Run detection on a sample video
 
 ```bash
 python services/detection/detector.py --source data/sample_videos/sample.mp4
 ```
 
-### 6. Start the backend API
+### 7. Start the backend API
 
 ```bash
 cd apps/backend
@@ -252,7 +260,7 @@ uvicorn main:app --reload --port 8000
 
 API docs available at: `http://localhost:8000/docs`
 
-### 7. Start the frontend
+### 8. Start the frontend
 
 ```bash
 cd apps/frontend
