@@ -1,4 +1,4 @@
-import aioredis
+from redis import asyncio as aioredis
 import os
 
 _redis_client = None

@@ -4,7 +4,7 @@ import logging
 from libs.schemas.feedback import FeedbackRequest, FeedbackRecord
 from apps.backend.services.feedback_collector import FeedbackCollector
 from apps.backend.dependencies import get_redis_client
-import aioredis
+from redis import asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/alerts", tags=["feedback"])
@@ -72,5 +72,5 @@ async def get_track_feedback(
         logger.error(f"Retrieval failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Retrieval error"
-    )
+            detail="Retrieval error"
+        )

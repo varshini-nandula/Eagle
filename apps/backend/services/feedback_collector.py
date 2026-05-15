@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, List, AsyncIterator
-import aioredis
+from redis import asyncio as aioredis
 from libs.schemas.feedback import FeedbackRecord, FeedbackRequest
 
 logger = logging.getLogger(__name__)

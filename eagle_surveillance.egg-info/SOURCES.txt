@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+apps/__init__.py
+eagle_surveillance.egg-info/PKG-INFO
+eagle_surveillance.egg-info/SOURCES.txt
+eagle_surveillance.egg-info/dependency_links.txt
+eagle_surveillance.egg-info/requires.txt
+eagle_surveillance.egg-info/top_level.txt
+libs/__init__.py
+scripts/export_finetuning_dataset.py
+services/__init__.py
+tests/test_detector.py
+tests/test_policy_loader.py

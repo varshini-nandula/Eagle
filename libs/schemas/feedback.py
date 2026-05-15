@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field, validator
 from typing import List
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic.json import pydantic_encoder
 from datetime import datetime
 import base64
 
@@ -47,7 +48,8 @@ class FeedbackRequest(BaseModel):
         description="Base64 encoded frame image"
     )
 
-    @validator("frame_b64")
+    @field_validator("frame_b64", mode="after")
+    @classmethod
     def validate_base64(cls, v):
         try:
             base64.b64decode(v, validate=True)
@@ -58,6 +60,8 @@ class FeedbackRequest(BaseModel):
 
 # Redis storage schema: what gets persisted
 class FeedbackRecord(BaseModel):
+    model_config = ConfigDict(ser_json_timedelta="float")
+    
     alert_id: str
     track_id: int
     caption_sequence: List[str]
@@ -67,19 +71,13 @@ class FeedbackRecord(BaseModel):
     frame_b64: str
     timestamp: datetime
 
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
-
 
 # LLaVA format schema: what gets exported for fine-tuning
 class Conversation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    
     from_: str = Field(..., alias="from")
     value: str
-
-    class Config:
-        allow_population_by_field_name = True
 
 
 class LLaVAConversation(BaseModel):
@@ -93,7 +91,8 @@ class LLaVAConversation(BaseModel):
         min_items=1
     )
 
-    @validator("conversations")
+    @field_validator("conversations", mode="after")
+    @classmethod
     def validate_conversations(cls, v):
         roles = [conv.from_ for conv in v]
 

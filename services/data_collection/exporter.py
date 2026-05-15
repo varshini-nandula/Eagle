@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import aiofiles
 from datetime import datetime, timezone
 from pathlib import Path
 from libs.schemas.feedback import LLaVAConversation, Conversation, FeedbackRecord
@@ -35,7 +36,7 @@ class LLaVAExporter:
             ]
         )
 
-    async def export_to_jsonl(self, output_filename: str = None) -> str:
+    async def export_to_jsonl(self, output_filename: str = None) -> tuple:
        
         if not output_filename:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -45,30 +46,24 @@ class LLaVAExporter:
         record_count = 0
         
         try:
-            # Stream records from Redis (memory efficient async iterator)
-            with open(output_path, 'w') as f:
+            async with aiofiles.open(output_path, 'w') as f:
                 async for record in self.collector.get_all_feedback():
                     llava_record = await self.format_to_llava(record)
-                    f.write(llava_record.model_dump_json() + '\n')
+                    await f.write(llava_record.model_dump_json() + '\n')
                     record_count += 1
             
             logger.info(f"Exported {record_count} records to {output_path}")
-            return str(output_path)
+            return (str(output_path), record_count)
             
         except Exception as e:
             logger.error(f"Export failed: {e}", exc_info=True)
             if output_path.exists():
-                output_path.unlink()  # Cleanup partial file
+                output_path.unlink()
             raise
 
     async def export_with_metadata(self, output_filename: str = None) -> dict:
         
-        #Export JSONL + create metadata file with stats and frame mapping.
-
-        jsonl_path = await self.export_to_jsonl(output_filename)
-        
-        # Count records in JSONL
-        record_count = sum(1 for _ in open(jsonl_path))
+        jsonl_path, record_count = await self.export_to_jsonl(output_filename)
         
         # Metadata: dataset info for training pipeline
         metadata = {
@@ -76,12 +71,12 @@ class LLaVAExporter:
             "export_timestamp": datetime.now(timezone.utc).isoformat(),
             "record_count": record_count,
             "format": "LLaVA conversation",
-            "image_dir": "frames/"  # Expected directory structure for frames
+            "image_dir": "frames/"
         }
         
         metadata_path = self.output_dir / f"{Path(jsonl_path).stem}_metadata.json"
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        async with aiofiles.open(metadata_path, 'w') as f:
+            await f.write(json.dumps(metadata, indent=2))
         
         logger.info(f"Metadata written to {metadata_path}")
         

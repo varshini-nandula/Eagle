@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 import os
-import aioredis
+from redis import asyncio as aioredis
 from apps.backend.services.feedback_collector import FeedbackCollector
 from services.data_collection.exporter import LLaVAExporter
 
