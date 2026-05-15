@@ -11,17 +11,18 @@ Usage (API):
     results = detector.detect(frame)
 """
 from __future__ import annotations
-
 import argparse
 import logging
 from pathlib import Path
+from services.reasoning.prompts import build_reasoning_prompt
 
 import cv2
 import numpy as np
 from pydantic import BaseModel
+from services.reasoning.scene_graph import SceneGraphBuilder
 from ultralytics import YOLO
 
-from zones import DEFAULT_ZONES, get_zones_for_point
+from services.detection.zones import DEFAULT_ZONES, get_zones_for_point
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,6 +188,18 @@ def main() -> None:
             break
 
         det_frame = detector.detect(frame, frame_id=frame_id)
+        builder = SceneGraphBuilder(det_frame)
+        
+        builder.build_graph()
+        graph_text = builder.serialize_graph()
+
+        if frame_id % 30 == 0 and graph_text:
+            prompt = build_reasoning_prompt(graph_text)
+            print("\nLLM PROMPT:\n")
+            print(prompt)
+        
+        
+
         annotated  = draw_detections(frame, det_frame)
 
         cv2.imshow("Agentic Vision — Detection", annotated)
