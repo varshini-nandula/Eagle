@@ -30,6 +30,7 @@ from libs.schemas.tracking  import (
     TrackedObject, TrackedFrame, TrackState,
     TrajectoryPoint, TrackLifecycleEvent,
 )
+from libs.logging.track_event_logger import TrackEventLogger
 from services.detection.zones import get_zones_for_point
 
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,7 @@ class Tracker:
         n_init: int         = 3,        # frames before a track is CONFIRMED
         max_cosine_distance: float = 0.4,
         camera_id: str      = "cam_01",
+        event_logger: TrackEventLogger | None = None,
     ) -> None:
         self.fps       = fps
         self.camera_id = camera_id
@@ -71,6 +73,7 @@ class Tracker:
         self._known_ids:       set[int]                 = set()
         self._frame_id:        int                      = 0
         self._lifecycle_queue: list[TrackLifecycleEvent] = []
+        self._event_logger:    TrackEventLogger | None   = event_logger
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -201,7 +204,7 @@ class Tracker:
         zones: list[str],
         dwell_secs: float,
     ) -> None:
-        self._lifecycle_queue.append(TrackLifecycleEvent(
+        event = TrackLifecycleEvent(
             event              = state,
             track_id           = track_id,
             frame_id           = self._frame_id,
@@ -209,7 +212,10 @@ class Tracker:
             zones_present      = zones,
             dwell_time_seconds = dwell_secs,
             timestamp_ms       = time.time() * 1000,
-        ))
+        )
+        self._lifecycle_queue.append(event)
+        if self._event_logger is not None:
+            self._event_logger.log_event(event)
 
 # ─── CLI Demo ────────────────────────────────────────────────────────────────
 

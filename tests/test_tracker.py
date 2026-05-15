@@ -212,3 +212,104 @@ def test_multiple_tracks_get_unique_ids(MockDeepSort):
     )
     ids = {t.track_id for t in result.tracks}
     assert ids == {1, 2}
+
+
+@patch("services.tracking.tracker.DeepSort")
+def test_lifecycle_sequence_10_frame_mock(MockDeepSort):
+    """
+    Acceptance criteria (Issue #14): verify BORN → LOST → DEAD event sequence
+    for a 10-frame mock video.
+
+    Scenario:
+        - Frames 0–4: track #1 visible (BORN at frame 0)
+        - Frames 5–9: track #1 disappears (LOST at frame 5, DEAD after max_age)
+        - max_age=3 so DEAD fires at frame 5 + 3 + 1 = frame 9
+
+    Expected lifecycle events in order: [BORN, LOST, DEAD]
+    """
+    from services.tracking.tracker import Tracker
+
+    mock_ds = MagicMock()
+    MockDeepSort.return_value = mock_ds
+    mock_ds.max_age = 3  # short max_age so DEAD fires within 10 frames
+
+    tracker   = Tracker(fps=30)
+    raw_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    all_events = []
+
+    for frame_id in range(10):
+        if frame_id < 5:
+            # Track #1 visible in frames 0–4
+            mock_ds.update_tracks.return_value = [
+                _make_mock_track(1, [100, 80, 50, 120])
+            ]
+        else:
+            # Track #1 vanished in frames 5–9
+            mock_ds.update_tracks.return_value = []
+
+        det = _make_det_frame(frame_id, [[100, 80, 150, 200]])
+        tracker.update(det, raw_frame)
+        all_events.extend(tracker.drain_lifecycle_events())
+
+    # Extract event types in order
+    event_types = [e.event for e in all_events]
+    assert TrackState.BORN in event_types, "BORN event missing"
+    assert TrackState.LOST in event_types, "LOST event missing"
+    assert TrackState.DEAD in event_types, "DEAD event missing"
+
+    # Verify ordering: BORN before LOST before DEAD
+    born_idx = event_types.index(TrackState.BORN)
+    lost_idx = event_types.index(TrackState.LOST)
+    dead_idx = event_types.index(TrackState.DEAD)
+    assert born_idx < lost_idx < dead_idx, (
+        f"Wrong order: BORN@{born_idx}, LOST@{lost_idx}, DEAD@{dead_idx}"
+    )
+
+    # Verify all events belong to track #1
+    for e in all_events:
+        assert e.track_id == 1
+
+
+@patch("services.tracking.tracker.DeepSort")
+def test_lifecycle_logging_integration(MockDeepSort, tmp_path):
+    """
+    End-to-end: Tracker with event_logger writes JSONL file with correct schema.
+    """
+    import json
+    from services.tracking.tracker import Tracker
+    from libs.logging.track_event_logger import TrackEventLogger
+
+    log_file = tmp_path / "tracks.jsonl"
+    event_logger = TrackEventLogger(log_path=log_file)
+
+    mock_ds = MagicMock()
+    MockDeepSort.return_value = mock_ds
+    mock_ds.max_age = 2
+
+    tracker   = Tracker(fps=30, event_logger=event_logger)
+    raw_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    # Frame 0: track appears → BORN
+    mock_ds.update_tracks.return_value = [_make_mock_track(10, [100, 80, 50, 120])]
+    tracker.update(_make_det_frame(0, [[100, 80, 150, 200]]), raw_frame)
+
+    # Frames 1–4: track vanishes → LOST at frame 1, DEAD at frame 1 + 2 + 1 = 4
+    for fid in range(1, 5):
+        mock_ds.update_tracks.return_value = []
+        tracker.update(_make_det_frame(fid, []), raw_frame)
+
+    # Verify JSONL file
+    assert log_file.exists()
+    lines = log_file.read_text(encoding="utf-8").strip().splitlines()
+    records = [json.loads(line) for line in lines]
+
+    event_names = [r["event"] for r in records]
+    assert "BIRTH" in event_names
+    assert "LOST" in event_names
+    assert "DEAD" in event_names
+
+    # Verify BIRTH record has zone field
+    birth_rec = next(r for r in records if r["event"] == "BIRTH")
+    assert "zone" in birth_rec
+    assert "track_id" in birth_rec
+    assert birth_rec["track_id"] == 10

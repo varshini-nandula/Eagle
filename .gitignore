@@ -6,3 +6,4 @@ venv/
 *.pt        # model weights
 *.onnx
 data/sample_videos/*.mp4
+data/logs/
