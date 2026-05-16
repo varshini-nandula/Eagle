@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     reasoning_dwell_threshold_seconds: float = 5.0
     reasoning_cooldown_seconds: float = 5.0
 
+    # Kafka Settings
+    use_kafka: bool = False
+    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_topic: str = "track-events"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

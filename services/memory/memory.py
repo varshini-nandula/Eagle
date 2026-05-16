@@ -31,13 +31,13 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import Optional
 
 import numpy as np
 
 from libs.observability.metrics import redis_write_latency
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
+from libs.schemas.memory import TrackEvent, TrackSequence
 from services.tracking.cross_camera_reid import CrossCameraReID
 
 logger = logging.getLogger(__name__)
@@ -238,3 +238,61 @@ class MemoryService:
                 EVENT_TTL_SECONDS,
                 json.dumps(evts),
             )
+
+# ── MemoryStore ────────────────────────────────────────────────────────────────
+MAX_EVENTS_PER_TRACK = 100
+
+class MemoryStore:
+    """
+    Simpler event storage for direct pipeline support.
+    Manages a ring-buffer of TrackEvents per track in Redis.
+    """
+    def __init__(self, redis_client=None) -> None:
+        import redis
+        self._r = redis_client or redis.Redis(decode_responses=True)
+
+    def store_event(self, event: TrackEvent) -> None:
+        """Store an event in a Redis list (ring buffer)."""
+        key = f"events:{event.track_id}"
+        self._r.lpush(key, event.model_dump_json())
+        self._r.ltrim(key, 0, MAX_EVENTS_PER_TRACK - 1)
+        self._r.expire(key, EVENT_TTL_SECONDS)
+
+        # Track active IDs for camera
+        cam_key = f"active_tracks:{event.camera_id}"
+        self._r.sadd(cam_key, event.track_id)
+        self._r.expire(cam_key, EVENT_TTL_SECONDS)
+
+    def get_sequence(self, track_id: int, last_n: Optional[int] = None) -> TrackSequence:
+        """Retrieve the sequence of events for a track."""
+        key = f"events:{track_id}"
+        raw_events = self._r.lrange(key, 0, -1)
+        
+        events = []
+        for raw in reversed(raw_events):
+            events.append(TrackEvent.model_validate_json(raw))
+        
+        if last_n:
+            events = events[-last_n:]
+            
+        return TrackSequence(
+            track_id=track_id,
+            events=events,
+            total_dwell=sum(e.dwell_time_seconds for e in events),
+            zones_visited=list(set(e.zone for e in events if e.zone))
+        )
+
+    def get_zone_entry_count(self, track_id: int, zone: str) -> int:
+        """Count how many times a track entered a specific zone."""
+        seq = self.get_sequence(track_id)
+        return sum(1 for e in seq.events if e.zone == zone)
+
+    def get_active_track_ids(self, camera_id: str) -> set[int]:
+        """Get set of track IDs recently seen by this camera."""
+        key = f"active_tracks:{camera_id}"
+        ids = self._r.smembers(key)
+        return {int(i) for i in ids}
+
+    def expire_track(self, track_id: int) -> None:
+        """Explicitly remove track data."""
+        self._r.delete(f"events:{track_id}")
