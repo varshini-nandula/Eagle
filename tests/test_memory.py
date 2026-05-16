@@ -182,3 +182,84 @@ def test_lingering_hint():
     registry = {2: {"restricted_door"}}   # already entered
     hint = classify_action(obj, obj, registry)
     assert hint == ActionHint.LINGERING
+
+
+def test_repeated_approach_second_entry():
+    from services.memory.action_classifier import classify_action
+    from libs.schemas.tracking import TrackedObject, TrackState
+
+    obj = TrackedObject(
+        track_id=3, label="person", bbox=[100,80,200,300],
+        confidence=0.9, center=(150,190), dwell_time_frames=1,
+        dwell_time_seconds=0.0, state=TrackState.ACTIVE,
+        zones_present=["restricted_door"],
+    )
+    registry = {}
+    counts = {}
+    cooldown = {}
+    
+    # First entry
+    hint1 = classify_action(obj, None, registry, counts, cooldown, 1000.0)
+    assert hint1 == ActionHint.ZONE_ENTRY
+    
+    # Second entry
+    hint2 = classify_action(obj, None, registry, counts, cooldown, 2000.0)
+    assert hint2 == ActionHint.REPEATED_APPROACH
+
+
+def test_repeated_approach_no_spam():
+    from services.memory.action_classifier import classify_action
+    from libs.schemas.tracking import TrackedObject, TrackState
+
+    obj = TrackedObject(
+        track_id=4, label="person", bbox=[100,80,200,300],
+        confidence=0.9, center=(150,190), dwell_time_frames=1,
+        dwell_time_seconds=0.0, state=TrackState.ACTIVE,
+        zones_present=["restricted_door"],
+    )
+    registry = {}
+    counts = {}
+    cooldown = {}
+    
+    # First entry
+    hint1 = classify_action(obj, None, registry, counts, cooldown, 1000.0)
+    assert hint1 == ActionHint.ZONE_ENTRY
+    
+    # Still inside the zone, not a new entry
+    hint_stay = classify_action(obj, obj, registry, counts, cooldown, 2000.0)
+    assert hint_stay != ActionHint.REPEATED_APPROACH
+    assert hint_stay != ActionHint.ZONE_ENTRY
+    
+    # Leave and enter again
+    hint2 = classify_action(obj, None, registry, counts, cooldown, 3000.0)
+    assert hint2 == ActionHint.REPEATED_APPROACH
+
+
+def test_repeated_approach_cooldown():
+    from services.memory.action_classifier import classify_action
+    from libs.schemas.tracking import TrackedObject, TrackState
+
+    obj = TrackedObject(
+        track_id=5, label="person", bbox=[100,80,200,300],
+        confidence=0.9, center=(150,190), dwell_time_frames=1,
+        dwell_time_seconds=0.0, state=TrackState.ACTIVE,
+        zones_present=["restricted_door"],
+    )
+    registry = {}
+    counts = {}
+    cooldown = {}
+    
+    # First entry
+    classify_action(obj, None, registry, counts, cooldown, 1000.0)
+    
+    # Second entry (triggers REPEATED_APPROACH, sets cooldown)
+    hint2 = classify_action(obj, None, registry, counts, cooldown, 2000.0)
+    assert hint2 == ActionHint.REPEATED_APPROACH
+    
+    # Third entry right after (within 10s cooldown)
+    hint3 = classify_action(obj, None, registry, counts, cooldown, 5000.0)
+    assert hint3 != ActionHint.REPEATED_APPROACH
+    
+    # Fourth entry after cooldown expires (15000 is > 10000 ms since 2000)
+    hint4 = classify_action(obj, None, registry, counts, cooldown, 15000.0)
+    assert hint4 == ActionHint.REPEATED_APPROACH

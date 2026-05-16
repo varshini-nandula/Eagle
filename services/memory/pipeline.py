@@ -15,6 +15,8 @@ from libs.config.settings import settings
 
 # Shared state for action classifier (tracks zone-entry history)
 _zone_entry_registry: dict[int, set[str]] = {}
+_zone_entry_counts: dict[int, dict[str, int]] = {}
+_last_repeated_approach: dict[int, float] = {}
 _prev_objects: dict[int, object] = {}
 
 # Global Kafka producer instance
@@ -38,7 +40,15 @@ def process_tracked_frame(tracked: TrackedFrame, store: MemoryStore) -> list[Tra
 
     for obj in tracked.tracks:
         prev = _prev_objects.get(obj.track_id)
-        hint = classify_action(obj, prev, _zone_entry_registry)
+        current_time_ms = time.time() * 1000
+        hint = classify_action(
+            obj, 
+            prev, 
+            _zone_entry_registry,
+            zone_entry_counts=_zone_entry_counts,
+            last_repeated_approach=_last_repeated_approach,
+            current_time_ms=current_time_ms
+        )
 
         event = TrackEvent(
             track_id           = obj.track_id,

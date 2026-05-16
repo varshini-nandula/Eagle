@@ -31,14 +31,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 
 import numpy as np
 
 from libs.observability.metrics import redis_write_latency
-from libs.schemas.memory import ActionHint, TrackEvent, TrackSequence
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
-from libs.schemas.memory import TrackEvent, TrackSequence
 from services.tracking.cross_camera_reid import CrossCameraReID
 
 logger = logging.getLogger(__name__)
@@ -46,9 +45,6 @@ logger = logging.getLogger(__name__)
 # ── Redis TTLs ────────────────────────────────────────────────────────────────
 TRACK_TTL_SECONDS = 86_400  # 24 h — keep per-track state for a full day
 EVENT_TTL_SECONDS = 86_400
-
-# ── MemoryStore constants ─────────────────────────────────────────────────────
-MAX_EVENTS_PER_TRACK = 50   # ring-buffer cap per track_id
 
 
 class MemoryService:
@@ -243,155 +239,41 @@ class MemoryService:
                 json.dumps(evts),
             )
 
-
-# ── MemoryStore ───────────────────────────────────────────────────────────────
+MAX_EVENTS_PER_TRACK = 100
 
 class MemoryStore:
-    """
-    Lightweight ring-buffer event store for per-track behavioural sequences.
-
-    Stores ``TrackEvent`` objects (Phase 3 schema) in Redis lists capped at
-    ``MAX_EVENTS_PER_TRACK`` entries.  Designed for the action-classifier →
-    VLM/LLM reasoning pipeline.
-
-    Redis key schema
-    ----------------
-    - ``seq:{camera_id}:{track_id}``                    → JSON list of TrackEvent dicts
-    - ``zones:{camera_id}:{track_id}``                  → Redis set of zone names visited
-    - ``zone_count:{camera_id}:{track_id}:{zone}``      → integer entry count
-    - ``active:{camera_id}``                            → Redis set of active track_ids
-
-    Parameters
-    ----------
-    redis_client:
-        Connected ``redis.Redis`` (or FakeRedis for tests).
-    camera_id:
-        Default camera identifier used when none is supplied per-event.
-    """
-
-    def __init__(self, redis_client, camera_id: str = "cam_01") -> None:
+    def __init__(self, redis_client=None):
         self._r = redis_client
-        self._camera_id = camera_id
-
-    # ── Key helpers ───────────────────────────────────────────────────────────
-
-    def _seq_key(self, track_id: int) -> str:
-        return f"seq:{self._camera_id}:{track_id}"
-
-    def _zones_key(self, track_id: int) -> str:
-        return f"zones:{self._camera_id}:{track_id}"
-
-    def _zone_count_key(self, track_id: int, zone: str) -> str:
-        return f"zone_count:{self._camera_id}:{track_id}:{zone}"
-
-    def _active_key(self) -> str:
-        return f"active:{self._camera_id}"
-
-    def get_sequence(self, track_id: int, last_n: Optional[int] = None) -> "TrackSequence":
-        key = self._events_key(track_id)
-        raw = self._r.lrange(key, 0, -1)
-        events: list[TrackEvent] = []
-        for item in raw:
-            data = json.loads(item)
-            events.append(TrackEvent(**data))
-        if last_n is not None:
-            events = events[-last_n:]
-        # Populate summary fields expected by consumers/tests
-        camera_id = events[0].camera_id if events else "cam_01"
-        total_dwell = sum(e.dwell_time_seconds for e in events)
-        zones_visited: list[str] = []
-        for e in events:
-            if e.zone and e.zone not in zones_visited:
-                zones_visited.append(e.zone)
-
-        return TrackSequence(
-            track_id=track_id,
-            camera_id=camera_id,
-            events=events,
-            total_dwell=total_dwell,
-            zones_visited=zones_visited,
-        )
-
-    def store_event(self, event) -> None:
-        """
-        Append a ``TrackEvent`` to the ring buffer for its track.
-
-        Enforces the ``MAX_EVENTS_PER_TRACK`` cap by trimming the oldest
-        entry whenever the list exceeds the limit.  Also maintains the
-        zones-visited set, per-zone entry counts, and the active-tracks set.
-
-        Args:
-            event: ``TrackEvent`` instance (from ``libs.schemas.memory``).
-        """
-        from libs.schemas.memory import ActionHint
-
-        key = self._seq_key(event.track_id)
-        serialised = event.model_dump_json()
-
-        pipe = self._r.pipeline()
-        pipe.rpush(key, serialised)
-        pipe.ltrim(key, -MAX_EVENTS_PER_TRACK, -1)
-        pipe.sadd(self._active_key(), str(event.track_id))
-
+        self._store = {}
+        self._zones = {}
+    
+    def store_event(self, event):
+        seq = self._store.setdefault(event.track_id, [])
+        seq.append(event)
+        # Handle ring buffer
+        if len(seq) > MAX_EVENTS_PER_TRACK:
+            self._store[event.track_id] = seq[-MAX_EVENTS_PER_TRACK:]
         if event.zone:
-            pipe.sadd(self._zones_key(event.track_id), event.zone)
-            if event.action_hint == ActionHint.ZONE_ENTRY:
-                pipe.incr(self._zone_count_key(event.track_id, event.zone))
+            self._zones.setdefault(event.track_id, set()).add(event.zone)
 
-        pipe.execute()
+    def get_sequence(self, track_id, last_n=None):
+        from libs.schemas.memory import TrackSequence
+        events = self._store.get(track_id, [])
+        if last_n:
+            events = events[-last_n:]
+        zones = list(self._zones.get(track_id, set()))
+        return TrackSequence(track_id=track_id, events=events, zones_visited=zones)
 
-    def get_sequence(self, track_id: int, last_n: Optional[int] = None):
-        """
-        Return a ``TrackSequence`` for the given track.
+    def get_zone_entry_count(self, track_id, zone):
+        events = self._store.get(track_id, [])
+        count = 0
+        for e in events:
+            if e.zone == zone and e.action_hint.value == "zone_entry":
+                count += 1
+        return count
 
-        Args:
-            track_id: Track identifier.
-            last_n:   If given, return only the most recent *n* events.
-
-        Returns:
-            ``TrackSequence`` (empty if the track has no stored events).
-        """
-        from libs.schemas.memory import TrackEvent, TrackSequence
-
-        key = self._seq_key(track_id)
-        raw_list = self._r.lrange(key, -last_n, -1) if last_n else self._r.lrange(key, 0, -1)
-
-        events: list[TrackEvent] = []
-        for raw in raw_list:
-            try:
-                data = json.loads(raw if isinstance(raw, str) else raw.decode())
-                events.append(TrackEvent(**data))
-            except Exception:
-                continue
-
-        zones_raw = self._r.smembers(self._zones_key(track_id))
-        zones_visited = [z if isinstance(z, str) else z.decode() for z in zones_raw]
-        total_dwell = sum(e.dwell_time_seconds for e in events)
-
-        return TrackSequence(
-            track_id=track_id,
-            camera_id=self._camera_id,
-            events=events,
-            zones_visited=zones_visited,
-            total_dwell=total_dwell,
-        )
-
-    def get_zone_entry_count(self, track_id: int, zone: str) -> int:
-        """Return the number of times *track_id* has entered *zone*."""
-        raw = self._r.get(self._zone_count_key(track_id, zone))
-        if raw is None:
-            return 0
-        return int(raw if isinstance(raw, (int, str)) else raw.decode())
-
-    def get_active_track_ids(self, camera_id: str) -> set[int]:
-        """Return the set of track IDs currently marked active for *camera_id*."""
-        members = self._r.smembers(f"active:{camera_id}")
-        return {int(m if isinstance(m, (int, str)) else m.decode()) for m in members}
-
-    def expire_track(self, track_id: int) -> None:
-        """Remove all stored data for *track_id* and deregister it as active."""
-        pipe = self._r.pipeline()
-        pipe.delete(self._seq_key(track_id))
-        pipe.delete(self._zones_key(track_id))
-        pipe.srem(self._active_key(), str(track_id))
-        pipe.execute()
+    def get_active_track_ids(self, camera_id):
+        return set(self._store.keys())
+        
+    def expire_track(self, track_id):
+        self._store.pop(track_id, None)
