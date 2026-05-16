@@ -274,10 +274,10 @@ class Tracker:
 
                     if (
                         zone
-                        and zone.max_age_override is not None
+                        and zone.get("max_age_override") is not None
                     ):
                         effective_max_age = (
-                            zone.max_age_override
+                            zone.get("max_age_override")
                         )
 
                 if frames_since > effective_max_age:
