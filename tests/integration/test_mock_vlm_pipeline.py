@@ -443,7 +443,6 @@ class TestFullOfflinePipeline:
         sys.modules.pop("ollama", None)
 
         # Re-import the mock module — should succeed even without ollama.
-        import importlib
         mod = importlib.import_module("services.reasoning.mock_vlm")
         assert hasattr(mod, "MockVLMCaptioner")
         assert "ollama" not in sys.modules, (
