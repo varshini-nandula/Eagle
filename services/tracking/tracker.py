@@ -1,5 +1,5 @@
 """
-tracker.py — Wraps deep-sort-realtime (ByteTrack-style) to assign persistent
+tracker.py – Wraps deep-sort-realtime (ByteTrack-style) to assign persistent
 track IDs to YOLO detections coming from Phase 1.
 
 Usage (standalone):
@@ -22,10 +22,9 @@ import cv2
 import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
-# ── adjust sys.path so we can import sibling packages ──────────────────────
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from libs.schemas.detection import DetectionFrameSchema
 from libs.schemas.tracking import (
@@ -58,22 +57,33 @@ class Tracker:
     - Lifecycle event emission (BORN / LOST / DEAD)
     """
 
-    MAX_TRAJECTORY_LEN = 80  # max trajectory points stored per track
+    MAX_TRAJECTORY_LEN = 80
     FPS_DEFAULT = 30
 
     def __init__(
         self,
         fps: float = FPS_DEFAULT,
-        max_age: int = 30,  # frames before a lost track is marked DEAD
-        n_init: int = 3,  # frames before a track is CONFIRMED
+        max_age: int = 30,
+        n_init: int = 3,
         max_cosine_distance: float = 0.4,
         camera_id: str = "cam_01",
         event_logger: TrackEventLogger | None = None,
         reid_similarity_threshold: float = 0.85,
     ) -> None:
+        """Initialize the Tracker with DeepSort backend and internal state.
+
+        Args:
+            fps: Frames per second of the input stream.
+            max_age: Frames before a lost track is marked DEAD.
+            n_init: Frames before a track is CONFIRMED.
+            max_cosine_distance: ReID appearance distance threshold.
+            camera_id: Identifier for the camera feed.
+            event_logger: Optional logger for lifecycle events.
+            reid_similarity_threshold: Cosine similarity cutoff for ReID matching.
+        """
         self.fps = fps
         self.camera_id = camera_id
-        self.max_age = max_age  # NEW
+        self.max_age = max_age
         self.REID_SIMILARITY_THRESHOLD = reid_similarity_threshold
 
         self._tracker = DeepSort(
@@ -82,7 +92,6 @@ class Tracker:
             max_cosine_distance=max_cosine_distance,
             nn_budget=100,
         )
-        # Internal state
         self._active_tracks: dict[int, TrackedObject] = {}
         self._known_ids: set[int] = set()
         self._frame_id: int = 0
@@ -90,8 +99,6 @@ class Tracker:
         self._event_logger: TrackEventLogger | None = event_logger
         self._lost_embeddings: dict[int, dict] = {}
         self._active_embeddings: dict[int, np.ndarray] = {}
-
-    # ── Public API ──────────────────────────────────────────────────────────
 
     def update(
         self,
@@ -103,7 +110,7 @@ class Tracker:
 
         Args:
             det_frame:  Output of Phase 1 detector (DetectionFrameSchema).
-            raw_frame:  Original BGR frame — needed for appearance features.
+            raw_frame:  Original BGR frame – needed for appearance features.
 
         Returns:
             TrackedFrame with all confirmed tracks, dwell times, trajectories.
@@ -111,21 +118,17 @@ class Tracker:
         self._frame_id = det_frame.frame_id
         frames_processed_total.inc()
 
-        # ── Convert Pydantic detections → DeepSort input format ───────────
-        # DeepSort expects: list of ([left, top, w, h], confidence, label)
         ds_input = []
         for det in det_frame.detections:
-            if det.label != "person":  # track persons only in this phase
+            if det.label != "person":
                 continue
             b = det.bbox
             left, top = b.x1, b.y1
             w, h = b.x2 - b.x1, b.y2 - b.y1
             ds_input.append(([left, top, w, h], float(det.confidence), "person"))
 
-        # ── Run tracker ────────────────────────────────────────────────────
         raw_tracks = self._tracker.update_tracks(ds_input, frame=raw_frame)
 
-        # ── Build TrackedObject list ───────────────────────────────────────
         current_ids: set[int] = set()
         tracked_objects: list[TrackedObject] = []
 
@@ -135,7 +138,6 @@ class Tracker:
 
             tid = int(t.track_id)
 
-            # ── ReID matching ─────────────────────────────────────
             if hasattr(t, "features") and t.features:
                 new_embedding = t.features[-1]
                 self._active_embeddings[tid] = new_embedding
@@ -166,18 +168,15 @@ class Tracker:
 
             zones = [z.name for z in get_zones_for_point(cx, cy)]
 
-            # ── Lifecycle: BORN ───────────────────────────────────────────
             if tid not in self._known_ids:
                 self._known_ids.add(tid)
                 self._emit_lifecycle(TrackState.BORN, tid, zones, 0.0)
                 logger.info(f"Track BORN: #{tid} in zones={zones}")
 
-            # ── Dwell time ────────────────────────────────────────────────
             prev = self._active_tracks.get(tid)
             dwell_frames = (prev.dwell_time_frames + 1) if prev else 1
             dwell_secs = dwell_frames / self.fps
 
-            # ── Trajectory ────────────────────────────────────────────────
             prev_traj = prev.trajectory if prev else []
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
             trajectory = (prev_traj + [new_point])[-self.MAX_TRAJECTORY_LEN :]
@@ -203,7 +202,6 @@ class Tracker:
         for obj in tracked_objects:
             track_dwell_seconds.observe(obj.dwell_time_seconds)
 
-        # ── Lifecycle: LOST for tracks that disappeared ────────────────────
         for tid, prev_obj in list(self._active_tracks.items()):
             if tid not in current_ids:
                 frames_since = self._frame_id - prev_obj.last_seen_frame
@@ -240,7 +238,7 @@ class Tracker:
                     del self._active_tracks[tid]
                     self._active_embeddings.pop(tid, None)
                     logger.info(f"Track DEAD: #{tid} after {prev_obj.dwell_time_seconds:.1f}s")
-        # ── Cleanup expired ReID embeddings ──────────────────
+
         expired_ids = [
             tid
             for tid, data in self._lost_embeddings.items()
@@ -259,15 +257,22 @@ class Tracker:
         )
 
     def drain_lifecycle_events(self) -> list[TrackLifecycleEvent]:
-        """
-        Pop and return all pending lifecycle events since last call.
-        Called by the memory service to store BORN/LOST/DEAD events.
+        """Pop and return all pending lifecycle events since the last call.
+
+        Called by the memory service to consume BORN/LOST/DEAD events.
+
+        Returns:
+            List of TrackLifecycleEvent objects queued since the last drain.
+            Returns an empty list if no events are pending.
+
+        Example:
+            events = tracker.drain_lifecycle_events()
+            for evt in events:
+            memory_service.store(evt)
         """
         events = list(self._lifecycle_queue)
         self._lifecycle_queue.clear()
         return events
-
-    # ── Internal ────────────────────────────────────────────────────────────
 
     def _emit_lifecycle(
         self,
@@ -276,6 +281,14 @@ class Tracker:
         zones: list[str],
         dwell_secs: float,
     ) -> None:
+        """Create and queue a TrackLifecycleEvent, optionally logging it.
+
+        Args:
+            state: TrackState enum value (BORN, LOST, or DEAD).
+            track_id: Unique integer ID of the track.
+            zones: List of zone names the track currently occupies.
+            dwell_secs: Total dwell time in seconds for this track.
+        """
         event = TrackLifecycleEvent(
             event=state,
             track_id=track_id,
@@ -294,6 +307,15 @@ class Tracker:
         a: np.ndarray,
         b: np.ndarray,
     ) -> float:
+        """Compute cosine similarity between two embedding vectors.
+
+        Args:
+            a: First embedding vector as numpy array.
+            b: Second embedding vector as numpy array.
+
+        Returns:
+            Float in [0, 1] representing similarity; 0.0 if either norm is zero.
+        """
         norm_product = np.linalg.norm(a) * np.linalg.norm(b)
         if norm_product == 0:
             return 0.0
@@ -301,17 +323,19 @@ class Tracker:
         return float(np.dot(a, b) / norm_product)
 
 
-# ─── CLI Demo ────────────────────────────────────────────────────────────────
-
-
 def main() -> None:
+    """CLI entry point for the tracking demo on video or webcam.
+
+    Parses arguments, initializes Detector and Tracker, runs the pipeline,
+    and optionally writes annotated output to a video file.
+    """
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from services.detection.detector import Detector
     from services.tracking.visualizer import draw_tracks
 
-    parser = argparse.ArgumentParser(description="Phase 2 — Tracking demo")
+    parser = argparse.ArgumentParser(description="Phase 2 – Tracking demo")
     parser.add_argument("--source", default="0")
     parser.add_argument("--model", default="yolov8n.pt")
     parser.add_argument("--output", default=None)
@@ -340,14 +364,13 @@ def main() -> None:
         tracked_frame = tracker.update(det_frame, frame)
         annotated = draw_tracks(frame, tracked_frame)
 
-        # Drain lifecycle events (Phase 3 will store these in Redis)
         for evt in tracker.drain_lifecycle_events():
             logger.info(
                 f"Lifecycle: {evt.event} track #{evt.track_id} "
                 f"dwell={evt.dwell_time_seconds:.1f}s zones={evt.zones_present}"
             )
 
-        cv2.imshow("Agentic Vision — Tracking", annotated)
+        cv2.imshow("Agentic Vision – Tracking", annotated)
         if writer:
             writer.write(annotated)
         if cv2.waitKey(1) & 0xFF == ord("q"):
