@@ -26,6 +26,7 @@ Usage
     for event in tracker.drain_lifecycle_events():
         global_id = mem.handle_lifecycle_event(event, embedding=vec)
 """
+
 from __future__ import annotations
 
 import json
@@ -35,13 +36,14 @@ from typing import Optional
 
 import numpy as np
 
+from libs.observability.metrics import redis_write_latency
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
 from services.tracking.cross_camera_reid import CrossCameraReID
 
 logger = logging.getLogger(__name__)
 
 # ── Redis TTLs ────────────────────────────────────────────────────────────────
-TRACK_TTL_SECONDS = 86_400   # 24 h — keep per-track state for a full day
+TRACK_TTL_SECONDS = 86_400  # 24 h — keep per-track state for a full day
 EVENT_TTL_SECONDS = 86_400
 
 
@@ -59,14 +61,14 @@ class MemoryService:
     """
 
     def __init__(self, redis_client, reid: CrossCameraReID) -> None:
-        self._r    = redis_client
+        self._r = redis_client
         self._reid = reid
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def handle_lifecycle_event(
         self,
-        event:     TrackLifecycleEvent,
+        event: TrackLifecycleEvent,
         embedding: Optional[np.ndarray] = None,
     ) -> Optional[str]:
         """
@@ -112,49 +114,52 @@ class MemoryService:
 
     def _handle_born(
         self,
-        event:     TrackLifecycleEvent,
+        event: TrackLifecycleEvent,
         embedding: Optional[np.ndarray],
     ) -> str:
         if embedding is not None:
             reid_result = self._reid.match_or_create(
-                camera_id = event.camera_id,
-                track_id  = event.track_id,
-                embedding = embedding,
+                camera_id=event.camera_id,
+                track_id=event.track_id,
+                embedding=embedding,
             )
             global_id = reid_result.global_id
         else:
             # No embedding available → mint a placeholder global_id
             import uuid
+
             global_id = str(uuid.uuid4())
             logger.warning(
                 "BORN event for cam=%s track=%d has no embedding; "
                 "cross-camera ReID disabled for this track.",
-                event.camera_id, event.track_id,
+                event.camera_id,
+                event.track_id,
             )
 
         record = {
-            "camera_id":           event.camera_id,
-            "track_id":            event.track_id,
-            "global_id":           global_id,
-            "state":               TrackState.ACTIVE.value,
-            "born_frame":          event.frame_id,
-            "born_timestamp_ms":   event.timestamp_ms,
-            "last_seen_frame":     event.frame_id,
-            "last_seen_ms":        event.timestamp_ms,
-            "dwell_time_seconds":  event.dwell_time_seconds,
-            "zones_present":       event.zones_present,
+            "camera_id": event.camera_id,
+            "track_id": event.track_id,
+            "global_id": global_id,
+            "state": TrackState.ACTIVE.value,
+            "born_frame": event.frame_id,
+            "born_timestamp_ms": event.timestamp_ms,
+            "last_seen_frame": event.frame_id,
+            "last_seen_ms": event.timestamp_ms,
+            "dwell_time_seconds": event.dwell_time_seconds,
+            "zones_present": event.zones_present,
         }
-        self._r.setex(
-            self._track_key(event.camera_id, event.track_id),
-            TRACK_TTL_SECONDS,
-            json.dumps(record),
-        )
+        with redis_write_latency.time():
+            self._r.setex(
+                self._track_key(event.camera_id, event.track_id),
+                TRACK_TTL_SECONDS,
+                json.dumps(record),
+            )
         logger.info("BORN  cam=%s track=%d gid=%s", event.camera_id, event.track_id, global_id)
         return global_id
 
     def _handle_lost(
         self,
-        event:     TrackLifecycleEvent,
+        event: TrackLifecycleEvent,
         embedding: Optional[np.ndarray],
     ) -> Optional[str]:
         record = self._load_record(event.camera_id, event.track_id)
@@ -163,10 +168,10 @@ class MemoryService:
         # Store embedding so another camera can match against it within 5 s
         if embedding is not None:
             self._reid.store_embedding(
-                camera_id = event.camera_id,
-                track_id  = event.track_id,
-                embedding = embedding,
-                global_id = global_id,
+                camera_id=event.camera_id,
+                track_id=event.track_id,
+                embedding=embedding,
+                global_id=global_id,
             )
 
         self._update_record(event, TrackState.LOST.value)
@@ -193,13 +198,15 @@ class MemoryService:
 
     def _update_record(self, event: TrackLifecycleEvent, state: str) -> None:
         record = self._load_record(event.camera_id, event.track_id) or {}
-        record.update({
-            "state":              state,
-            "last_seen_frame":    event.frame_id,
-            "last_seen_ms":       event.timestamp_ms,
-            "dwell_time_seconds": event.dwell_time_seconds,
-            "zones_present":      event.zones_present,
-        })
+        record.update(
+            {
+                "state": state,
+                "last_seen_frame": event.frame_id,
+                "last_seen_ms": event.timestamp_ms,
+                "dwell_time_seconds": event.dwell_time_seconds,
+                "zones_present": event.zones_present,
+            }
+        )
         self._r.setex(
             self._track_key(event.camera_id, event.track_id),
             TRACK_TTL_SECONDS,
@@ -208,19 +215,26 @@ class MemoryService:
 
     def _append_event(
         self,
-        event:     TrackLifecycleEvent,
+        event: TrackLifecycleEvent,
         global_id: Optional[str],
     ) -> None:
-        key  = self._event_key(event.camera_id, event.frame_id)
-        raw  = self._r.get(key)
+        key = self._event_key(event.camera_id, event.frame_id)
+        raw = self._r.get(key)
         evts: list[dict] = json.loads(raw) if raw else []
-        evts.append({
-            "event":              event.event.value,
-            "track_id":           event.track_id,
-            "global_id":          global_id,
-            "frame_id":           event.frame_id,
-            "timestamp_ms":       event.timestamp_ms,
-            "dwell_time_seconds": event.dwell_time_seconds,
-            "zones_present":      event.zones_present,
-        })
-        self._r.setex(key, EVENT_TTL_SECONDS, json.dumps(evts))
+        evts.append(
+            {
+                "event": event.event.value,
+                "track_id": event.track_id,
+                "global_id": global_id,
+                "frame_id": event.frame_id,
+                "timestamp_ms": event.timestamp_ms,
+                "dwell_time_seconds": event.dwell_time_seconds,
+                "zones_present": event.zones_present,
+            }
+        )
+        with redis_write_latency.time():
+            self._r.setex(
+                key,
+                EVENT_TTL_SECONDS,
+                json.dumps(evts),
+            )
