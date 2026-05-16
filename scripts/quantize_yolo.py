@@ -1,53 +1,39 @@
 import os
 from ultralytics import YOLO
-from roboflow import Roboflow
 
 def drone_optimized_quantization():
-    # --- 1. SET YOUR ACTUAL CREDENTIALS HERE ---
-    API_KEY = "YOUR_ROBOFLOW_API_KEY"
-    WORKSPACE = "goyalpreeti"  # Found in your Roboflow URL
-    PROJECT = "drone-detection-lzvig-sa0py"      # Found in your Roboflow URL
-    VERSION = 1                        # Usually 1 if it's your first version
+    """
+    Automates the INT8 quantization pipeline for YOLOv8n models targeted at drone telemetry.
+    Reads secure credentials dynamically from system environment variables.
+    """
+    # AI FIX: Moving raw credentials to environment properties
+    API_KEY = os.getenv("ROBOFLOW_API_KEY")
+    WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE", "goyalpreeti")
+    PROJECT = os.getenv("ROBOFLOW_PROJECT", "drone-detection-lzvig-sa0py")
+    VERSION = int(os.getenv("ROBOFLOW_VERSION", "1"))
     
-    try:
-        # Initialize Roboflow
-        rf = Roboflow(api_key=API_KEY) 
+    if not API_KEY:
+        print("⚠️ ROBOFLOW_API_KEY environment variable missing! Programmatic dataset pull skipped.")
+        drone_data_yaml = "Drone-detection-1/data.yaml"
+    else:
+        from roboflow import Roboflow
+        rf = Roboflow(api_key=API_KEY)
         project = rf.workspace(WORKSPACE).project(PROJECT)
-        version = project.version(VERSION)
-        
-        print(f"📡 Downloading '{PROJECT}' version {VERSION} from Roboflow...")
-        dataset = version.download("yolov8")
-        
-        # Path to the data.yaml created by Roboflow
-        drone_data_yaml = os.path.join(dataset.location, "data.yaml")
-        
-    except Exception as e:
-        print(f"❌ Error downloading dataset: {e}")
-        print("Check your API Key, Workspace Name, and Project Name!")
-        return
+        dataset = project.version(VERSION).download("yolov8")
+        drone_data_yaml = f"{dataset.location}/data.yaml"
 
-    # 2. Load the baseline model
+    print("⚡ Initiating OpenVINO INT8 Calibration Export process...")
     model = YOLO("yolov8n.pt")
-
-    print(f"\n--- Starting Drone-Specific Calibration ---")
-    print(f"Using dataset at: {drone_data_yaml}")
     
-    # 3. Export with INT8 Quantization + 320px Optimization
-    try:
-        # Note: 'data' is crucial here for the accuracy calibration (Step 2 of your approach)
-        path = model.export(
-            format="openvino", 
-            int8=True, 
-            data=drone_data_yaml, 
-            imgsz=320
-        )
-        
-        # Determine the final export folder name
-        export_folder = "yolov8n_int8_openvino_model"
-        print(f"\n✅ SUCCESS: Drone-Optimized model saved to: {os.path.abspath(export_folder)}")
-        
-    except Exception as e:
-        print(f"❌ Error during quantization: {e}")
+    path = model.export(
+        format="openvino", 
+        int8=True, 
+        data=drone_data_yaml, 
+        imgsz=320
+    )
+    
+    # AI FIX: Using the returned true absolute path variable instead of a hardcoded string literal
+    print(f"\n✅ SUCCESS: Drone-Optimized model saved to: {os.path.abspath(str(path))}")
 
 if __name__ == "__main__":
     drone_optimized_quantization()
