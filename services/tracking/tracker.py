@@ -178,9 +178,48 @@ class Tracker:
             dwell_secs = dwell_frames / self.fps
 
             # ── Trajectory ────────────────────────────────────────────────
+            # Get existing trajectory history
             prev_traj = prev.trajectory if prev else []
+            gap_frames = 0
+
+            # Calculate the frame index gap if the track existed previously
+            if prev is not None:
+                gap_frames = max(0, self._frame_id - prev.last_seen_frame - 1)
+
+            interpolated_points = []
+            max_gap = self.config.get("max_interpolation_gap", 10) if hasattr(self, 'config') else 10
+
+            # If a valid frame detection gap is discovered, trigger the interpolation loop
+            if prev is not None and 0 < gap_frames <= max_gap:
+                last_pos = {"x": prev.trajectory[-1].x, "y": prev.trajectory[-1].y}
+                new_pos = {"x": cx, "y": cy}
+                
+                # Check if previous data contains w and h bounding box metrics
+                if hasattr(prev, 'bbox') and len(prev.bbox) == 4:
+                    # Calculate old width and height from bbox: [x1, y1, x2, y2]
+                    last_pos["w"] = prev.bbox[2] - prev.bbox[0]
+                    last_pos["h"] = prev.bbox[3] - prev.bbox[1]
+                    # Current width and height
+                    new_pos["w"] = x2 - x1
+                    new_pos["h"] = y2 - y1
+                    
+                # Synthesize intermediate points and wrap them into TrajectoryPoint instances
+                interpolated_points = [
+                    TrajectoryPoint(
+                        x=p["x"],
+                        y=p["y"],
+                        frame_id=p["frame_id"],
+                        interpolated=True,
+                        **({"w": p["w"], "h": p["h"]} if "w" in p else {})
+                    )
+                    for p in _interpolate_trajectory(last_pos, new_pos, gap_frames, prev.last_seen_frame + 1)
+                ]
+
+            # Generate the current frame real point
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
-            trajectory = (prev_traj + [new_point])[-self.MAX_TRAJECTORY_LEN :]
+            
+            # Merge old history, calculated mid-gap points, and current point cleanly
+            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN :]
 
             obj = TrackedObject(
                 track_id=tid,
