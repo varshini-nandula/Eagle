@@ -26,6 +26,7 @@ def make_event(track_id: int, frame_id: int, zone: str | None = None,
                hint: ActionHint = ActionHint.WALKING, dwell: float = 0.0) -> TrackEvent:
     return TrackEvent(
         track_id           = track_id,
+        camera_id          = "cam_01",
         frame_id           = frame_id,
         timestamp_ms       = time.time() * 1000 + frame_id * 33,
         zone               = zone,
@@ -75,7 +76,7 @@ def test_track_sequence_duration():
 def test_store_and_retrieve_event(store):
     evt = make_event(5, 0, zone="restricted_door", hint=ActionHint.ZONE_ENTRY)
     store.store_event(evt)
-    seq = store.get_sequence(track_id=5)
+    seq = store.get_sequence(track_id=5, camera_id="cam_01")
     assert len(seq.events) == 1
     assert seq.events[0].zone == "restricted_door"
     assert seq.events[0].action_hint == ActionHint.ZONE_ENTRY
@@ -85,7 +86,7 @@ def test_ring_buffer_caps_at_max(store):
     """Storing MAX + 10 events should result in exactly MAX stored."""
     for i in range(MAX_EVENTS_PER_TRACK + 10):
         store.store_event(make_event(3, i))
-    seq = store.get_sequence(3)
+    seq = store.get_sequence(3, camera_id="cam_01")
     assert len(seq.events) == MAX_EVENTS_PER_TRACK
 
 
@@ -93,7 +94,7 @@ def test_oldest_events_dropped(store):
     """After ring-buffer overflow, only the most recent MAX events remain."""
     for i in range(MAX_EVENTS_PER_TRACK + 5):
         store.store_event(make_event(6, i))
-    seq = store.get_sequence(6)
+    seq = store.get_sequence(6, camera_id="cam_01")
     first_kept = seq.events[0].frame_id
     assert first_kept == 5   # first 5 frames dropped
 
@@ -102,27 +103,27 @@ def test_sequence_chronological_order(store):
     """Events must be returned in the order they were inserted (oldest first)."""
     for i in [0, 1, 2, 3, 4]:
         store.store_event(make_event(7, i))
-    seq = store.get_sequence(7)
+    seq = store.get_sequence(7, camera_id="cam_01")
     frame_ids = [e.frame_id for e in seq.events]
     assert frame_ids == sorted(frame_ids)
 
 
 def test_empty_sequence_for_unknown_track(store):
-    seq = store.get_sequence(track_id=9999)
+    seq = store.get_sequence(track_id=9999, camera_id="cam_01")
     assert len(seq.events) == 0
 
 
 def test_zones_visited_populated(store):
     store.store_event(make_event(10, 0, zone="safe_corridor", hint=ActionHint.ZONE_ENTRY))
     store.store_event(make_event(10, 5, zone="restricted_door", hint=ActionHint.ZONE_ENTRY))
-    seq = store.get_sequence(10)
+    seq = store.get_sequence(10, camera_id="cam_01")
     assert set(seq.zones_visited) == {"safe_corridor", "restricted_door"}
 
 
 def test_zone_entry_count(store):
     store.store_event(make_event(11, 0, zone="restricted_door", hint=ActionHint.ZONE_ENTRY))
     store.store_event(make_event(11, 30, zone="restricted_door", hint=ActionHint.ZONE_ENTRY))
-    count = store.get_zone_entry_count(track_id=11, zone="restricted_door")
+    count = store.get_zone_entry_count(track_id=11, camera_id="cam_01", zone="restricted_door")
     assert count == 2
 
 
@@ -135,15 +136,15 @@ def test_active_tracks_set(store):
 
 def test_expire_track_removes_keys(store):
     store.store_event(make_event(30, 0))
-    store.expire_track(30)
-    seq = store.get_sequence(30)
+    store.expire_track(30, camera_id="cam_01")
+    seq = store.get_sequence(30, camera_id="cam_01")
     assert len(seq.events) == 0
 
 
 def test_get_sequence_last_n(store):
     for i in range(30):
         store.store_event(make_event(40, i))
-    seq = store.get_sequence(40, last_n=10)
+    seq = store.get_sequence(40, camera_id="cam_01", last_n=10)
     assert len(seq.events) == 10
     assert seq.events[0].frame_id == 20   # last 10 of frames 0–29
 

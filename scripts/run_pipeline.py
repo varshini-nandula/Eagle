@@ -42,7 +42,7 @@ while True:
     # Log sequences every 90 frames (~3s)
     if frame_id % 90 == 0:
         for track in tracked_frame.tracks:
-            seq = store.get_sequence(track.track_id)
+            seq = store.get_sequence(track.track_id, tracked_frame.camera_id)
             logger.info(
                 f"Track #{track.track_id} | events={len(seq.events)} | "
                 f"summary={seq.action_summary} | dwell={seq.total_dwell:.1f}s"
