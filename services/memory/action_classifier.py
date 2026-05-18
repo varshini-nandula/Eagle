@@ -12,14 +12,15 @@ from __future__ import annotations
 import math
 from libs.schemas.tracking import TrackedObject
 from libs.schemas.memory   import ActionHint
+from libs.config.settings import settings
 
 
-LINGERING_THRESHOLD_SEC  = 5.0    # seconds in zone before LINGERING
-MOVEMENT_THRESHOLD_PX    = 8.0    # pixels/frame centroid must move to be WALKING
-NEAR_KEYPAD_DIST_PX      = 80.0   # pixels from keypad centre to count as NEAR_KEYPAD
+LINGERING_THRESHOLD_SEC  = settings.lingering_threshold_sec
+MOVEMENT_THRESHOLD_PX    = settings.movement_threshold_px
+NEAR_KEYPAD_DIST_PX      = settings.near_keypad_dist_px
 
 # Approximate keypad centre (pixels) — configurable via env in production
-KEYPAD_CENTER = (600.0, 280.0)
+KEYPAD_CENTER = (settings.keypad_center_x, settings.keypad_center_y)
 
 
 def classify_action(

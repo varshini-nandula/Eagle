@@ -14,6 +14,8 @@ from libs.schemas.tracking import TrackedFrame
 from libs.schemas.memory   import TrackEvent
 from services.memory.action_classifier import classify_action
 from services.memory.memory import MemoryStore
+from services.memory.kafka_producer import KafkaEventProducer
+from libs.config.settings import settings
 
 if TYPE_CHECKING:
     from services.action_recognition.inference import ActionRecognizer
@@ -22,6 +24,11 @@ if TYPE_CHECKING:
 # Shared state for action classifier (tracks zone-entry history)
 _zone_entry_registry: dict[int, set[str]] = {}
 _prev_objects: dict[int, object] = {}
+
+# Global Kafka producer instance
+_kafka_producer: KafkaEventProducer | None = None
+if settings.use_kafka:
+    _kafka_producer = KafkaEventProducer()
 
 
 def process_tracked_frame(
@@ -56,7 +63,11 @@ def process_tracked_frame(
             confidence         = obj.confidence,
         )
 
-        store.store_event(event)
+        if settings.use_kafka and _kafka_producer and _kafka_producer.producer is not None:
+            _kafka_producer.produce_event(event)
+        else:
+            store.store_event(event)
+
         events.append(event)
         _prev_objects[obj.track_id] = obj
 

@@ -18,6 +18,7 @@ import logging
 import time
 from pathlib import Path
 
+from Eagle.libs.config import settings
 import cv2
 import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
@@ -313,7 +314,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Phase 2 — Tracking demo")
     parser.add_argument("--source", default="0")
-    parser.add_argument("--model", default="yolov8n.pt")
+    parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 

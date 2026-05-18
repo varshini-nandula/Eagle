@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import cv2
 import numpy as np
+import redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -103,8 +104,6 @@ def main() -> None:
     parser.add_argument("--no-display", action="store_true")
     args = parser.parse_args()
 
-    import redis
-
     source = int(args.source) if str(args.source).isdigit() else args.source
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -141,13 +140,13 @@ def main() -> None:
 
         annotated = draw_tracks(frame, tracked_frame)
         for evt in events:
-            if not evt.temporal_action:
+            if not getattr(evt, "temporal_action", None):
                 continue
             for t in tracked_frame.tracks:
                 if t.track_id != evt.track_id:
                     continue
                 x1, _, _, y2 = [int(v) for v in t.bbox]
-                conf = evt.temporal_action_confidence or 0.0
+                conf = getattr(evt, "temporal_action_confidence", 0.0)
                 label = f"{evt.temporal_action} ({conf:.2f})"
                 cv2.putText(
                     annotated, label, (x1, y2 + 18),
@@ -159,13 +158,18 @@ def main() -> None:
             embedding = tracker._active_embeddings.get(evt.track_id)
             memory_service.handle_lifecycle_event(evt, embedding=embedding)
 
-        if frame_id % 90 == 0 and events:
-            logger.info(
-                "Track #%d | temporal=%s | hint=%s",
-                events[-1].track_id,
-                events[-1].temporal_action,
-                events[-1].action_hint.value,
-            )
+        # Log sequences every 90 frames (~3s)
+        if frame_id % 90 == 0:
+            for track in tracked_frame.tracks:
+                seq = memory_store.get_sequence(track.track_id, tracked_frame.camera_id)
+                action_info = ""
+                if events and getattr(events[-1], "temporal_action", None):
+                    action_info = f" | temporal={events[-1].temporal_action} | hint={getattr(events[-1].action_hint, 'value', str(getattr(events[-1], 'action_hint', '')))}"
+                
+                logger.info(
+                    f"Track #{track.track_id} | events={len(seq.events)} | "
+                    f"summary={seq.action_summary} | dwell={seq.total_dwell:.1f}s{action_info}"
+                )
 
         if not args.no_display:
             cv2.imshow("Eagle — Detection + Tracking + Actions", annotated)

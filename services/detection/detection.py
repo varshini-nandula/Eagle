@@ -21,6 +21,7 @@ from ultralytics import YOLO
 
 from libs.schemas.detection import DetectionFrameSchema, DetectionSchema, BoundingBox
 from services.detection.zones import DEFAULT_ZONES, get_zones_for_point
+from libs.config.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class Detector:
 
     def __init__(
         self,
-        model_name: str = "yolov8n.pt",
+        model_name: str = settings.detector_model,
         confidence_threshold: float = 0.45,
         device: str = "cpu",
     ) -> None:
@@ -142,7 +143,7 @@ def draw_detections(frame: np.ndarray, det_frame: DetectionFrame) -> np.ndarray:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Agentic Vision detection demo")
     parser.add_argument("--source", default="0", help="Video file path or camera index")
-    parser.add_argument("--model", default="yolov8n.pt", help="YOLO model name")
+    parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
     parser.add_argument("--conf", type=float, default=0.45, help="Confidence threshold")
     parser.add_argument("--output", default=None, help="Optional output video path")
     args = parser.parse_args()
