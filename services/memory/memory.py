@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 
 import numpy as np
 
 from libs.observability.metrics import redis_write_latency
-from libs.schemas.memory import ActionHint, TrackEvent, TrackSequence
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
 from services.tracking.cross_camera_reid import CrossCameraReID
 from services.memory.baseline import ZoneBaseline
@@ -46,9 +46,6 @@ logger = logging.getLogger(__name__)
 # ── Redis TTLs ────────────────────────────────────────────────────────────────
 TRACK_TTL_SECONDS = 86_400  # 24 h — keep per-track state for a full day
 EVENT_TTL_SECONDS = 86_400
-
-# ── MemoryStore constants ─────────────────────────────────────────────────────
-MAX_EVENTS_PER_TRACK = 50   # ring-buffer cap per track_id
 
 
 class MemoryService:
@@ -257,33 +254,10 @@ class MemoryService:
                 json.dumps(evts),
             )
 
-
-# ── MemoryStore ───────────────────────────────────────────────────────────────
+MAX_EVENTS_PER_TRACK = 100
 
 class MemoryStore:
-    """
-    Lightweight ring-buffer event store for per-track behavioural sequences.
-
-    Stores ``TrackEvent`` objects (Phase 3 schema) in Redis lists capped at
-    ``MAX_EVENTS_PER_TRACK`` entries.  Designed for the action-classifier →
-    VLM/LLM reasoning pipeline.
-
-    Redis key schema
-    ----------------
-    - ``seq:{camera_id}:{track_id}``                    → JSON list of TrackEvent dicts
-    - ``zones:{camera_id}:{track_id}``                  → Redis set of zone names visited
-    - ``zone_count:{camera_id}:{track_id}:{zone}``      → integer entry count
-    - ``active:{camera_id}``                            → Redis set of active track_ids
-
-    Parameters
-    ----------
-    redis_client:
-        Connected ``redis.Redis`` (or FakeRedis for tests).
-    camera_id:
-        Default camera identifier used when none is supplied per-event.
-    """
-
-    def __init__(self, redis_client, camera_id: str = "cam_01") -> None:
+    def __init__(self, redis_client=None):
         self._r = redis_client
         self._camera_id = camera_id
 
@@ -322,9 +296,7 @@ class MemoryStore:
         pipe.sadd(self._active_key(), str(event.track_id))
 
         if event.zone:
-            pipe.sadd(self._zones_key(event.track_id), event.zone)
-            if event.action_hint == ActionHint.ZONE_ENTRY:
-                pipe.incr(self._zone_count_key(event.track_id, event.zone))
+            self._zones.setdefault(event.track_id, set()).add(event.zone)
 
         pipe.execute()
 
