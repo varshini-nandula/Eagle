@@ -31,14 +31,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 
 import numpy as np
 
 from libs.observability.metrics import redis_write_latency
-from libs.schemas.memory import ActionHint, TrackEvent, TrackSequence
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
 from services.tracking.cross_camera_reid import CrossCameraReID
+from services.memory.baseline import ZoneBaseline
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +88,19 @@ class MemoryService:
             The global_id string if one was assigned, else None.
         """
         global_id: Optional[str] = None
+        zone_anomalous: bool = False
 
         if event.event == TrackState.BORN:
             global_id = self._handle_born(event, embedding)
 
         elif event.event == TrackState.LOST:
-            global_id = self._handle_lost(event, embedding)
+            global_id, zone_anomalous = self._handle_lost(event, embedding)
 
         elif event.event == TrackState.DEAD:
             self._handle_dead(event)
 
         # Always append the raw event to the event log
-        self._append_event(event, global_id)
+        self._append_event(event, global_id, zone_anomalous)
         return global_id
 
     def get_track_record(self, camera_id: str, track_id: int) -> Optional[dict]:
@@ -161,7 +163,7 @@ class MemoryService:
         self,
         event: TrackLifecycleEvent,
         embedding: Optional[np.ndarray],
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], bool]:
         record = self._load_record(event.camera_id, event.track_id)
         global_id = record.get("global_id") if record else None
 
@@ -174,9 +176,19 @@ class MemoryService:
                 global_id=global_id,
             )
 
-        self._update_record(event, TrackState.LOST.value)
-        logger.info("LOST  cam=%s track=%d gid=%s", event.camera_id, event.track_id, global_id)
-        return global_id
+        # Detect anomaly BEFORE updating baseline (avoid contaminating with outlier)
+        # then update baseline for each zone this track visited
+        zone_anomalous = False
+        for zone in event.zones_present:
+            baseline = ZoneBaseline(self._r, zone)
+            if baseline.is_anomalous(event.dwell_time_seconds):
+                zone_anomalous = True
+            baseline.update(event.dwell_time_seconds)
+
+        self._update_record(event, TrackState.LOST.value, zone_anomalous)
+        logger.info("LOST  cam=%s track=%d gid=%s anomalous=%s",
+                    event.camera_id, event.track_id, global_id, zone_anomalous)
+        return global_id, zone_anomalous
 
     def _handle_dead(self, event: TrackLifecycleEvent) -> None:
         self._update_record(event, TrackState.DEAD.value)
@@ -196,7 +208,7 @@ class MemoryService:
         raw = self._r.get(self._track_key(camera_id, track_id))
         return json.loads(raw) if raw else None
 
-    def _update_record(self, event: TrackLifecycleEvent, state: str) -> None:
+    def _update_record(self, event: TrackLifecycleEvent, state: str, anomalous: bool = False) -> None:
         record = self._load_record(event.camera_id, event.track_id) or {}
         record.update(
             {
@@ -205,6 +217,7 @@ class MemoryService:
                 "last_seen_ms": event.timestamp_ms,
                 "dwell_time_seconds": event.dwell_time_seconds,
                 "zones_present": event.zones_present,
+                "anomalous": anomalous,
             }
         )
         self._r.setex(
@@ -217,6 +230,7 @@ class MemoryService:
         self,
         event: TrackLifecycleEvent,
         global_id: Optional[str],
+        anomalous: bool = False,
     ) -> None:
         key = self._event_key(event.camera_id, event.frame_id)
         raw = self._r.get(key)
@@ -230,6 +244,7 @@ class MemoryService:
                 "timestamp_ms": event.timestamp_ms,
                 "dwell_time_seconds": event.dwell_time_seconds,
                 "zones_present": event.zones_present,
+                "anomalous": anomalous,
             }
         )
         with redis_write_latency.time():
@@ -239,12 +254,7 @@ class MemoryService:
                 json.dumps(evts),
             )
 
-
-# Compatibility layer: lightweight event store used by tests and the pipeline.
-# Historically this module exported `MemoryStore` and `MAX_EVENTS_PER_TRACK`.
-# Add a small, well-documented shim so existing tests continue to work.
-MAX_EVENTS_PER_TRACK = 50
-
+MAX_EVENTS_PER_TRACK = 100
 
 class MemoryStore:
     """Simple Redis-backed ring buffer for TrackEvent objects.
@@ -264,11 +274,11 @@ class MemoryStore:
     def _events_key(self, track_id: int) -> str:
         return f"{self._prefix}:events:{track_id}"
 
-    def _active_key(self, camera_id: str) -> str:
-        return f"{self._prefix}:active:{camera_id}"
+    def _zone_count_key(self, track_id: int, zone: str) -> str:
+        return f"zone_count:{self._camera_id}:{track_id}:{zone}"
 
-    def _track_camera_key(self, track_id: int) -> str:
-        return f"{self._prefix}:track_camera:{track_id}"
+    def _active_key(self) -> str:
+        return f"active:{self._camera_id}"
 
     def store_event(self, evt: TrackEvent) -> None:
         key = self._events_key(evt.track_id)
@@ -286,50 +296,41 @@ class MemoryStore:
         key = self._events_key(track_id)
         raw = self._r.lrange(key, 0, -1)
         events: list[TrackEvent] = []
-        for item in raw:
-            data = json.loads(item)
-            events.append(TrackEvent(**data))
-        if last_n is not None:
-            events = events[-last_n:]
-        # Populate summary fields expected by consumers/tests
-        camera_id = events[0].camera_id if events else "cam_01"
+        for raw in raw_list:
+            try:
+                data = json.loads(raw if isinstance(raw, str) else raw.decode())
+                events.append(TrackEvent(**data))
+            except Exception:
+                continue
+
+        zones_raw = self._r.smembers(self._zones_key(track_id))
+        zones_visited = [z if isinstance(z, str) else z.decode() for z in zones_raw]
         total_dwell = sum(e.dwell_time_seconds for e in events)
-        zones_visited: list[str] = []
-        for e in events:
-            if e.zone and e.zone not in zones_visited:
-                zones_visited.append(e.zone)
 
         return TrackSequence(
             track_id=track_id,
-            camera_id=camera_id,
+            camera_id=self._camera_id,
             events=events,
-            total_dwell=total_dwell,
             zones_visited=zones_visited,
+            total_dwell=total_dwell,
         )
 
-    def get_zone_entry_count(self, track_id: int, zone: str) -> int:
-        seq = self.get_sequence(track_id)
-        return sum(1 for e in seq.events if e.zone == zone and e.action_hint == ActionHint.ZONE_ENTRY)
+    def get_zone_entry_count(self, track_id: int, zone: str, camera_id: Optional[str] = None) -> int:
+        """Return the number of times *track_id* has entered *zone*."""
+        raw = self._r.get(self._zone_count_key(track_id, zone))
+        if raw is None:
+            return 0
+        return int(raw if isinstance(raw, (int, str)) else raw.decode())
 
     def get_active_track_ids(self, camera_id: str) -> set[int]:
-        members = self._r.smembers(self._active_key(camera_id))
-        result: set[int] = set()
-        for m in members:
-            try:
-                result.add(int(m))
-            except Exception:
-                continue
-        return result
+        """Return the set of track IDs currently marked active for *camera_id*."""
+        members = self._r.smembers(f"active:{camera_id}")
+        return {int(m if isinstance(m, (int, str)) else m.decode()) for m in members}
 
-    def expire_track(self, track_id: int) -> None:
-        # Remove stored events and remove from active set
-        cam = self._r.get(self._track_camera_key(track_id))
-        if cam:
-            try:
-                cam = cam if isinstance(cam, str) else cam.decode()
-            except Exception:
-                pass
-            self._r.srem(self._active_key(cam), str(track_id))
-        self._r.delete(self._events_key(track_id))
-        self._r.delete(self._track_camera_key(track_id))
-
+    def expire_track(self, track_id: int, camera_id: Optional[str] = None) -> None:
+        """Remove all stored data for *track_id* and deregister it as active."""
+        pipe = self._r.pipeline()
+        pipe.delete(self._seq_key(track_id))
+        pipe.delete(self._zones_key(track_id))
+        pipe.srem(self._active_key(), str(track_id))
+        pipe.execute()

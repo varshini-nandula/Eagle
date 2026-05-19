@@ -32,6 +32,7 @@ class TrackedObject(BaseModel):
     trajectory: list[TrajectoryPoint]      = Field(default_factory=list)
     zones_present: list[str]               = Field(default_factory=list)
     last_seen_frame: int                   = 0
+    is_anomalous: bool                     = Field(False, description="True when dwell exceeds adaptive zone baseline")
 
 
 class TrackedFrame(BaseModel):
