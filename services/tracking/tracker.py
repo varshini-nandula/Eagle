@@ -166,7 +166,19 @@ class Tracker:
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
 
-            zones = [z.name for z in get_zones_for_point(cx, cy)]
+            matched_zones = get_zones_for_point(cx, cy)
+
+            ZONE_PRIORITY = {
+                "keypad_area": 2,
+                "restricted_door": 1,
+            }
+
+            matched_zones.sort(
+                key=lambda z: ZONE_PRIORITY.get(z.name, 0),
+                reverse=True,
+            )
+
+            zones = [z.name for z in matched_zones]
 
             if tid not in self._known_ids:
                 self._known_ids.add(tid)
@@ -183,8 +195,6 @@ class Tracker:
                 )
 
             prev = self._active_tracks.get(tid)
-            dwell_frames = (prev.dwell_time_frames + 1) if prev else 1
-            dwell_secs = dwell_frames / self.fps
 
             dwell_frames = (
                 prev.dwell_time_frames + 1
@@ -211,6 +221,7 @@ class Tracker:
             )
 
             self._active_tracks[tid] = obj
+            tracked_objects.append(obj)
 
             current_ids.add(tid)
 
