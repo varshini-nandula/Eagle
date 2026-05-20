@@ -6,6 +6,10 @@ Called once per frame from the main loop (or FastAPI ingest endpoint).
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING, Optional
+
+import numpy as np
+
 from libs.schemas.tracking import TrackedFrame
 from libs.schemas.memory   import TrackEvent
 from services.memory.action_classifier import classify_action
@@ -13,8 +17,14 @@ from services.memory.memory import MemoryStore
 from services.memory.kafka_producer import KafkaEventProducer
 from libs.config.settings import settings
 
+if TYPE_CHECKING:
+    from services.action_recognition.inference import ActionRecognizer
+    from services.memory.memory import MemoryService
+
 # Shared state for action classifier (tracks zone-entry history)
 _zone_entry_registry: dict[int, set[str]] = {}
+_zone_entry_counts: dict[int, dict[str, int]] = {}
+_last_repeated_approach: dict[int, float] = {}
 _prev_objects: dict[int, object] = {}
 
 # Global Kafka producer instance
@@ -23,22 +33,32 @@ if settings.use_kafka:
     _kafka_producer = KafkaEventProducer()
 
 
-def process_tracked_frame(tracked: TrackedFrame, store: MemoryStore) -> list[TrackEvent]:
+def process_tracked_frame(
+    tracked: TrackedFrame,
+    store: MemoryStore,
+    raw_frame: Optional[np.ndarray] = None,
+    action_recognizer: Optional["ActionRecognizer"] = None,
+    memory_service: Optional["MemoryService"] = None,
+) -> list[TrackEvent]:
     """
     Convert a TrackedFrame into TrackEvents and write them to Redis.
 
-    Args:
-        tracked: Output of Phase 2 Tracker.update()
-        store:   MemoryStore instance connected to Redis
-
-    Returns:
-        List of TrackEvent objects that were stored (useful for logging/testing).
+    When *action_recognizer* and *raw_frame* are provided, temporal action
+    labels are attached to events and published to track records in Redis.
     """
     events: list[TrackEvent] = []
 
     for obj in tracked.tracks:
         prev = _prev_objects.get(obj.track_id)
-        hint = classify_action(obj, prev, _zone_entry_registry)
+        current_time_ms = time.time() * 1000
+        hint = classify_action(
+            obj, 
+            prev, 
+            _zone_entry_registry,
+            zone_entry_counts=_zone_entry_counts,
+            last_repeated_approach=_last_repeated_approach,
+            current_time_ms=current_time_ms
+        )
 
         event = TrackEvent(
             track_id           = obj.track_id,
@@ -60,5 +80,19 @@ def process_tracked_frame(tracked: TrackedFrame, store: MemoryStore) -> list[Tra
 
         events.append(event)
         _prev_objects[obj.track_id] = obj
+
+    if action_recognizer is not None and raw_frame is not None:
+        try:
+            from services.memory.action_bridge import (
+                apply_actions_to_memory_events,
+                publish_actions_to_redis,
+            )
+            action_result = action_recognizer.update(tracked, raw_frame)
+            events = apply_actions_to_memory_events(events, action_result)
+            if memory_service is not None:
+                publish_actions_to_redis(memory_service, tracked.camera_id, action_result)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Action recognition failed: %s", exc)
 
     return events

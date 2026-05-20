@@ -1,6 +1,9 @@
 # Add to services/memory/requirements.txt
 redis==5.0.4
+numpy>=1.24.0
 pydantic>=2.10.0
+pydantic-settings>=2.0.0
+confluent-kafka>=2.3.0
 pytest==8.1.1
 pytest-mock==3.14.0
 fakeredis==2.21.3

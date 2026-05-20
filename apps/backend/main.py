@@ -23,23 +23,39 @@ import json
 import logging
 import os
 
+<<<<<<< HEAD
 import redis as redis_sync
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from prometheus_client import generate_latest
+=======
+from apps.backend.routes.zones import router as zones_router
+
+app = FastAPI()
+>>>>>>> 4d99088 (feat: adaptive anomaly baseline per zone using Welford's algorithm)
 
 from apps.backend.routes.cameras import identity_router, router as cameras_router
 from apps.backend.routes.feedback import router as feedback_router
 from libs.observability.metrics import frames_processed_total
+from services.memory.memory import MemoryService
+from services.tracking.cross_camera_reid import CrossCameraReID
 
+<<<<<<< HEAD
 logger = logging.getLogger(__name__)
-
-# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Eagle Surveillance API",
     description="Real-time semantic surveillance — detection, tracking, and reasoning.",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Redis (sync client for simple health / track-list queries) ────────────────
@@ -57,15 +73,42 @@ def _get_redis() -> redis_sync.Redis | None:
     """
     global _redis
     if _redis is None:
+=======
+try:
+    r = redis.from_url(REDIS_URL)
+    r.ping()
+    app.state.redis = r
+    print(f"[INFO] Connected to Redis at {REDIS_URL}")
+except (redis.RedisError, redis.ConnectionError) as e:
+    print(f"[WARN] Redis not available: {e}")
+    r = None
+
+app.include_router(zones_router)
+
+@app.get("/health")
+def health():
+    redis_status = "healthy"
+    if r is not None:
+>>>>>>> 4d99088 (feat: adaptive anomaly baseline per zone using Welford's algorithm)
         try:
             client = redis_sync.from_url(REDIS_URL, socket_connect_timeout=2)
             client.ping()
             _redis = client
+            
+            # Setup services on app.state
+            reid_engine = CrossCameraReID(client)
+            memory_service = MemoryService(client, reid_engine)
+            app.state.redis = client
+            app.state.reid = reid_engine
+            app.state.memory = memory_service
+            
             logger.info("Redis connected at %s", REDIS_URL)
         except Exception as exc:
             logger.warning("Redis unavailable: %s", exc)
+            app.state.redis = None
+            app.state.reid = None
+            app.state.memory = None
     return _redis
-
 
 # Attempt connection at startup (non-fatal if Redis is down).
 _get_redis()
@@ -83,16 +126,6 @@ app.include_router(feedback_router)
 async def health() -> dict:
     """
     Return server and Redis health.
-
-    Responses
-    ---------
-    Healthy::
-
-        {"status": "ok", "redis": "connected"}
-
-    Degraded (Redis unreachable)::
-
-        {"status": "degraded", "redis": "<error message>"}
     """
     r = _get_redis()
     if r is None:
@@ -105,6 +138,9 @@ async def health() -> dict:
         # Redis was reachable at startup but is now down.
         global _redis
         _redis = None          # force reconnect attempt on next call
+        app.state.redis = None
+        app.state.reid = None
+        app.state.memory = None
         return {"status": "degraded", "redis": str(exc)}
 
 
@@ -116,24 +152,6 @@ async def list_active_tracks(
 ) -> dict:
     """
     Return active track IDs for a camera.
-
-    Scans Redis for keys matching ``track:{camera_id}:*`` and returns the
-    integer track IDs whose stored state is ``ACTIVE``.
-
-    Query Parameters
-    ----------------
-    camera_id : str
-        Camera identifier (default: ``cam_01``).
-
-    Responses
-    ---------
-    Redis healthy::
-
-        {"camera_id": "cam_01", "track_ids": [1, 3, 7]}
-
-    Redis unavailable::
-
-        {"camera_id": "cam_01", "track_ids": [], "error": "Redis unavailable"}
     """
     r = _get_redis()
     if r is None:
