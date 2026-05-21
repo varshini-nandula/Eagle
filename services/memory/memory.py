@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import Optional
+
+import numpy as np
 
 from libs.observability.metrics import redis_write_latency
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
+from libs.schemas.memory import TrackEvent, TrackSequence, ActionHint
 from services.tracking.cross_camera_reid import CrossCameraReID
-from services.memory.baseline import ZoneBaseline
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,13 @@ class MemoryService:
     """
 
     def __init__(self, redis_client, reid: CrossCameraReID) -> None:
+        """
+        Initialise MemoryService with a Redis client and ReID engine.
+
+        Args:
+            redis_client: Connected redis.Redis or FakeRedis instance.
+            reid:         CrossCameraReID instance for global ID assignment.
+        """
         self._r = redis_client
         self._reid = reid
 
@@ -68,7 +76,7 @@ class MemoryService:
     def handle_lifecycle_event(
         self,
         event: TrackLifecycleEvent,
-        embedding: Optional["numpy.ndarray"] = None,
+        embedding: Optional[np.ndarray] = None,
     ) -> Optional[str]:
         """
         Process a single lifecycle event and return the assigned global_id.
@@ -86,19 +94,18 @@ class MemoryService:
             The global_id string if one was assigned, else None.
         """
         global_id: Optional[str] = None
-        zone_anomalous: bool = False
 
         if event.event == TrackState.BORN:
             global_id = self._handle_born(event, embedding)
 
         elif event.event == TrackState.LOST:
-            global_id, zone_anomalous = self._handle_lost(event, embedding)
+            global_id = self._handle_lost(event, embedding)
 
         elif event.event == TrackState.DEAD:
             self._handle_dead(event)
 
         # Always append the raw event to the event log
-        self._append_event(event, global_id, zone_anomalous)
+        self._append_event(event, global_id)
         return global_id
 
     def get_track_record(self, camera_id: str, track_id: int) -> Optional[dict]:
@@ -115,8 +122,21 @@ class MemoryService:
     def _handle_born(
         self,
         event: TrackLifecycleEvent,
-        embedding: Optional["numpy.ndarray"],
+        embedding: Optional[np.ndarray],
     ) -> str:
+        """
+        Handle a BORN lifecycle event.
+
+        Attempts ReID match to reuse an existing global_id; mints a new
+        UUID if no embedding is available.
+
+        Args:
+            event:     The BORN TrackLifecycleEvent.
+            embedding: Appearance feature vector, or None.
+
+        Returns:
+            Assigned global_id string.
+        """
         if embedding is not None:
             reid_result = self._reid.match_or_create(
                 camera_id=event.camera_id,
@@ -160,10 +180,21 @@ class MemoryService:
     def _handle_lost(
         self,
         event: TrackLifecycleEvent,
-        embedding: Optional["numpy.ndarray"],
-    ) -> Optional[str]:
         embedding: Optional[np.ndarray],
-    ) -> tuple[Optional[str], bool]:
+    ) -> Optional[str]:
+        """
+        Handle a LOST lifecycle event.
+
+        Stores the appearance embedding so another camera can match against
+        it within the ReID TTL window.
+
+        Args:
+            event:     The LOST TrackLifecycleEvent.
+            embedding: Appearance feature vector, or None.
+
+        Returns:
+            The existing global_id if found, else None.
+        """
         record = self._load_record(event.camera_id, event.track_id)
         global_id = record.get("global_id") if record else None
 
@@ -176,21 +207,19 @@ class MemoryService:
                 global_id=global_id,
             )
 
-        # Detect anomaly BEFORE updating baseline (avoid contaminating with outlier)
-        # then update baseline for each zone this track visited
-        zone_anomalous = False
-        for zone in event.zones_present:
-            baseline = ZoneBaseline(self._r, zone)
-            if baseline.is_anomalous(event.dwell_time_seconds):
-                zone_anomalous = True
-            baseline.update(event.dwell_time_seconds)
-
-        self._update_record(event, TrackState.LOST.value, zone_anomalous)
-        logger.info("LOST  cam=%s track=%d gid=%s anomalous=%s",
-                    event.camera_id, event.track_id, global_id, zone_anomalous)
-        return global_id, zone_anomalous
+        self._update_record(event, TrackState.LOST.value)
+        logger.info("LOST  cam=%s track=%d gid=%s", event.camera_id, event.track_id, global_id)
+        return global_id
 
     def _handle_dead(self, event: TrackLifecycleEvent) -> None:
+        """
+        Handle a DEAD lifecycle event.
+
+        Marks the track record as DEAD in Redis.
+
+        Args:
+            event: The DEAD TrackLifecycleEvent.
+        """
         self._update_record(event, TrackState.DEAD.value)
         logger.info("DEAD  cam=%s track=%d", event.camera_id, event.track_id)
 
@@ -198,17 +227,27 @@ class MemoryService:
 
     @staticmethod
     def _track_key(camera_id: str, track_id: int) -> str:
+        """Return the Redis key for a per-track state blob."""
         return f"track:{camera_id}:{track_id}"
 
     @staticmethod
     def _event_key(camera_id: str, frame_id: int) -> str:
+        """Return the Redis key for a per-frame event list."""
         return f"event:{camera_id}:{frame_id}"
 
     def _load_record(self, camera_id: str, track_id: int) -> Optional[dict]:
+        """Load and deserialise a track record from Redis, or return None."""
         raw = self._r.get(self._track_key(camera_id, track_id))
         return json.loads(raw) if raw else None
 
-    def _update_record(self, event: TrackLifecycleEvent, state: str, anomalous: bool = False) -> None:
+    def _update_record(self, event: TrackLifecycleEvent, state: str) -> None:
+        """
+        Update an existing track record's state and timing fields in Redis.
+
+        Args:
+            event: Source lifecycle event supplying updated field values.
+            state: New state string (e.g. 'LOST', 'DEAD').
+        """
         record = self._load_record(event.camera_id, event.track_id) or {}
         record.update(
             {
@@ -217,7 +256,6 @@ class MemoryService:
                 "last_seen_ms": event.timestamp_ms,
                 "dwell_time_seconds": event.dwell_time_seconds,
                 "zones_present": event.zones_present,
-                "anomalous": anomalous,
             }
         )
         self._r.setex(
@@ -230,8 +268,14 @@ class MemoryService:
         self,
         event: TrackLifecycleEvent,
         global_id: Optional[str],
-        anomalous: bool = False,
     ) -> None:
+        """
+        Append a lifecycle event dict to the per-frame Redis event log.
+
+        Args:
+            event:     Source lifecycle event.
+            global_id: Assigned global identity string, or None.
+        """
         key = self._event_key(event.camera_id, event.frame_id)
         raw = self._r.get(key)
         evts: list[dict] = json.loads(raw) if raw else []
@@ -244,7 +288,6 @@ class MemoryService:
                 "timestamp_ms": event.timestamp_ms,
                 "dwell_time_seconds": event.dwell_time_seconds,
                 "zones_present": event.zones_present,
-                "anomalous": anomalous,
             }
         )
         with redis_write_latency.time():
@@ -254,7 +297,10 @@ class MemoryService:
                 json.dumps(evts),
             )
 
-MAX_EVENTS_PER_TRACK = 100
+
+# Compatibility layer: lightweight event store used by tests and the pipeline.
+MAX_EVENTS_PER_TRACK = 50
+
 
 class MemoryStore:
     """Simple Redis-backed ring buffer for TrackEvent objects.
@@ -264,73 +310,119 @@ class MemoryStore:
     exposes the methods used by unit tests and the pipeline.
     """
 
-    def __init__(self, redis_client=None, prefix: str = "mem", camera_id: str = None) -> None:
+    def __init__(self, redis_client=None, prefix: str = "mem") -> None:
+        """
+        Initialise MemoryStore.
+
+        Args:
+            redis_client: Connected redis.Redis instance, or None to create one.
+            prefix:       Key prefix used for all Redis keys (default: 'mem').
+        """
         import redis
 
         self._r = redis_client or redis.Redis()
         self._prefix = prefix
-        self._camera_id = camera_id
 
     def _events_key(self, track_id: int) -> str:
+        """Return the Redis list key for a track's event history."""
         return f"{self._prefix}:events:{track_id}"
 
-    def _zone_count_key(self, track_id: int, zone: str) -> str:
-        return f"zone_count:{self._camera_id}:{track_id}:{zone}"
+    def _active_key(self, camera_id: str) -> str:
+        """Return the Redis set key for active track IDs on a camera."""
+        return f"{self._prefix}:active:{camera_id}"
 
-    def _active_key(self) -> str:
-        return f"active:{self._camera_id}"
+    def _track_camera_key(self, track_id: int) -> str:
+        """Return the Redis key mapping a track_id to its camera_id."""
+        return f"{self._prefix}:track_camera:{track_id}"
 
     def store_event(self, evt: TrackEvent) -> None:
+        """
+        Persist a TrackEvent to Redis and maintain the active-tracks set.
+
+        Trims the event list to MAX_EVENTS_PER_TRACK after each write.
+
+        Args:
+            evt: TrackEvent instance to store.
+        """
         key = self._events_key(evt.track_id)
-        # pydantic v2 uses `model_dump`; fall back to `dict()` if needed
         payload = evt.model_dump() if hasattr(evt, "model_dump") else evt.dict()
         self._r.rpush(key, json.dumps(payload))
-        # Keep only the most recent N events
         self._r.ltrim(key, -MAX_EVENTS_PER_TRACK, -1)
-        # Track active IDs per camera and remember camera for expiry
         self._r.sadd(self._active_key(evt.camera_id), str(evt.track_id))
         self._r.set(self._track_camera_key(evt.track_id), evt.camera_id)
         self._r.expire(key, TRACK_TTL_SECONDS)
 
     def get_sequence(self, track_id: int, last_n: Optional[int] = None) -> TrackSequence:
+        """
+        Retrieve the event sequence for a track from Redis.
+
+        Args:
+            track_id: Integer track identifier.
+            last_n:   If given, return only the most recent N events.
+
+        Returns:
+            TrackSequence containing the requested events.
+        """
         key = self._events_key(track_id)
         raw = self._r.lrange(key, 0, -1)
         events: list[TrackEvent] = []
-        for raw in raw_list:
-            try:
-                data = json.loads(raw if isinstance(raw, str) else raw.decode())
-                events.append(TrackEvent(**data))
-            except Exception:
-                continue
+        for item in raw:
+            data = json.loads(item)
+            events.append(TrackEvent(**data))
+        if last_n is not None:
+            events = events[-last_n:]
+        zones = list(dict.fromkeys(e.zone for e in events if e.zone is not None))
+        return TrackSequence(track_id=track_id, events=events, zones_visited=zones)
 
-        zones_raw = self._r.smembers(self._zones_key(track_id))
-        zones_visited = [z if isinstance(z, str) else z.decode() for z in zones_raw]
-        total_dwell = sum(e.dwell_time_seconds for e in events)
+    def get_zone_entry_count(self, track_id: int, zone: str) -> int:
+        """
+        Count how many times a track entered a specific zone.
 
-        return TrackSequence(
-            track_id=track_id,
-            camera_id=self._camera_id,
-            events=events,
-            zones_visited=zones_visited,
-            total_dwell=total_dwell,
+        Args:
+            track_id: Integer track identifier.
+            zone:     Zone name string to filter on.
+
+        Returns:
+            Integer count of ZONE_ENTRY events for the given zone.
+        """
+        seq = self.get_sequence(track_id)
+        return sum(
+            1 for e in seq.events
+            if e.zone == zone and e.action_hint == ActionHint.ZONE_ENTRY
         )
 
-    def get_zone_entry_count(self, track_id: int, zone: str, camera_id: Optional[str] = None) -> int:
-        """Return the number of times *track_id* has entered *zone*."""
-        raw = self._r.get(self._zone_count_key(track_id, zone))
-        if raw is None:
-            return 0
-        return int(raw if isinstance(raw, (int, str)) else raw.decode())
-
     def get_active_track_ids(self, camera_id: str) -> set[int]:
-        """Return the set of track IDs currently marked active for *camera_id*."""
-        members = self._r.smembers(f"active:{camera_id}")
-        return {int(m if isinstance(m, (int, str)) else m.decode()) for m in members}
+        """
+        Return the set of currently active track IDs for a camera.
 
-    def expire_track(self, track_id: int, camera_id: Optional[str] = None) -> None:
-        """Remove all stored data for *track_id* and deregister it as active."""
-        pipe = self._r.pipeline()
-        pipe.delete(self._seq_key(track_id))
-        pipe.delete(self._zones_key(track_id))
-        pipe.srem(self._active_key(), str(track_id))
-        pipe.execute()
+        Args:
+            camera_id: Camera identifier string.
+
+        Returns:
+            Set of integer track IDs active on that camera.
+        """
+        members = self._r.smembers(self._active_key(camera_id))
+        result: set[int] = set()
+        for m in members:
+            try:
+                result.add(int(m))
+            except Exception:
+                continue
+        return result
+
+    def expire_track(self, track_id: int) -> None:
+        """
+        Remove all Redis state for a track and drop it from the active set.
+
+        Args:
+            track_id: Integer track identifier to expire.
+        """
+        cam = self._r.get(self._track_camera_key(track_id))
+        if cam:
+            try:
+                cam = cam if isinstance(cam, str) else cam.decode()
+            except Exception:
+                pass
+            self._r.srem(self._active_key(cam), str(track_id))
+        self._r.delete(self._events_key(track_id))
+        self._r.delete(self._track_camera_key(track_id))
