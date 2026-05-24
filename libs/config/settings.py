@@ -4,6 +4,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Action classifier thresholds
+    lingering_threshold_sec: float = 5.0
+    movement_threshold_px: float = 10.0
+    near_keypad_dist_px: float = 80.0
+    keypad_center_x: int = 320
+    keypad_center_y: int = 240
     policy_path: str = "policies/default.yaml"
     detector_model: str = "yolov8n.pt"
     detection_confidence_threshold: float = 0.45

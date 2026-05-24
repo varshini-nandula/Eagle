@@ -71,11 +71,25 @@ class Tracker:
         camera_id: str = "cam_01",
         event_logger: TrackEventLogger | None = None,
         reid_similarity_threshold: float = 0.85,
+        max_interpolation_gap: int = 10,  # Added with a sensible default
     ) -> None:
+        """Initialize the tracker with DeepSort hyperparameters and interpolation constraints.
+
+        Args:
+            fps: Frame rate of the video source.
+            max_age: Maximum frames to keep a lost track alive before dropping it.
+            n_init: Number of consecutive frames needed to confirm a track.
+            max_cosine_distance: Maximum threshold for visual appearance feature matching.
+            camera_id: Unique identifier string for the source camera.
+            event_logger: Optional logger interface for tracking state lifecycle events.
+            reid_similarity_threshold: Minimum confidence needed to reconnect an ID via ReID.
+            max_interpolation_gap: Maximum frame gap size allowed to fill missing trajectories.
+        """
         self.fps = fps
         self.camera_id = camera_id
         self.max_age = max_age  # NEW
         self.REID_SIMILARITY_THRESHOLD = reid_similarity_threshold
+        self.max_interpolation_gap = max_interpolation_gap  # Fixed missing attribute
 
         self._tracker = DeepSort(
             max_age=max_age,
@@ -205,7 +219,9 @@ class Tracker:
 
             prev_traj = prev.trajectory if prev else []
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
-            trajectory = (prev_traj + [new_point])[-self.MAX_TRAJECTORY_LEN :]
+            
+            # Merge old history, calculated mid-gap points, and current point cleanly
+            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN :]
 
             obj = TrackedObject(
                 track_id=tid,
@@ -274,6 +290,7 @@ class Tracker:
                     del self._active_tracks[tid]
                     self._active_embeddings.pop(tid, None)
                     logger.info(f"Track DEAD: #{tid} after {prev_obj.dwell_time_seconds:.1f}s")
+                    
         # ── Cleanup expired ReID embeddings ──────────────────
         expired_ids = [
             tid
@@ -393,6 +410,37 @@ def main() -> None:
         writer.release()
     cv2.destroyAllWindows()
 
+def _interpolate_trajectory(
+    last_pos: dict, 
+    new_pos: dict, 
+    gap_frames: int, 
+    start_frame_id: int
+) -> list:
+    """Fills trajectory gaps using linear interpolation for temporary missed detections."""
+    if gap_frames <= 0:
+        return []
+
+    interpolated_points = []
+    total_steps = gap_frames + 1
+    
+    x_step = (new_pos['x'] - last_pos['x']) / total_steps
+    y_step = (new_pos['y'] - last_pos['y']) / total_steps
+    
+    for i in range(1, gap_frames + 1):
+        point = {
+            "frame_id": start_frame_id + (i - 1),
+            "x": round(last_pos['x'] + (x_step * i), 2),
+            "y": round(last_pos['y'] + (y_step * i), 2),
+            "interpolated": True
+        }
+        
+        if all(k in last_pos and k in new_pos for k in ('w', 'h')):
+            point['w'] = round(last_pos['w'] + (((new_pos['w'] - last_pos['w']) / total_steps) * i), 2)
+            point['h'] = round(last_pos['h'] + (((new_pos['h'] - last_pos['h']) / total_steps) * i), 2)
+            
+        interpolated_points.append(point)
+        
+    return interpolated_points
 
 if __name__ == "__main__":
     main()

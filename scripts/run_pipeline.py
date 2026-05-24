@@ -178,9 +178,70 @@ def main() -> None:
 
         frame_id += 1
 
-    cap.release()
-    cv2.destroyAllWindows()
+def process_frames(frames, detector=None, tracker=None, memory_service=None, show: bool = False):
+    """Process a list of frames through detection, tracking, and memory.
+
+    Returns a simple result object with attributes used by tests.
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class Result:
+        processed_frames: int = 0
+        events: list = None
+        action_summary: str = ""
+
+    det = detector or Detector()
+    trk = tracker or Tracker(fps=30)
+    mem = memory_service or MemoryStore()
+
+    res = Result(processed_frames=0, events=[])
+
+    frame_id = 0
+    for frame in frames:
+        det_frame = det.detect(frame, frame_id=frame_id)
+        tracked_frame = trk.update(det_frame, frame)
+        # If memory_service implements handle_lifecycle_event (MemoryService),
+        # use lifecycle events emitted by the tracker. Otherwise fall back to
+        # the legacy process_tracked_frame which expects a MemoryStore.
+        if hasattr(mem, "handle_lifecycle_event"):
+            # Drain lifecycle events from tracker and store via MemoryService
+            for evt in trk.drain_lifecycle_events():
+                mem.handle_lifecycle_event(evt, embedding=None)
+                res.events.append(evt)
+        else:
+            evts = process_tracked_frame(tracked_frame, mem)
+            res.events.extend(evts or [])
+        res.processed_frames += 1
+        if tracked_frame.tracks:
+            # simple action summary from first track sequence
+            first_tid = tracked_frame.tracks[0].track_id
+            if hasattr(mem, "get_sequence"):
+                seq = mem.get_sequence(first_tid)
+            elif hasattr(mem, "_r"):
+                # MemoryService: create a temporary MemoryStore using same Redis
+                from services.memory.memory import MemoryStore
+
+                tmp = MemoryStore(redis_client=mem._r)
+                seq = tmp.get_sequence(first_tid)
+            else:
+                seq = None
+
+            if seq and getattr(seq, "action_summary", ""):
+                res.action_summary = seq.action_summary
+            else:
+                # Fallback: build a simple summary from lifecycle events
+                if res.events:
+                    actions = [e.event.value for e in res.events]
+                    unique = []
+                    for a in actions:
+                        if not unique or unique[-1] != a:
+                            unique.append(a)
+                    res.action_summary = " -> ".join(unique)
+        frame_id += 1
+    return res
 
 
 if __name__ == "__main__":
-    main()
+    cap.release()
+    cv2.destroyAllWindows()

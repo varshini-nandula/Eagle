@@ -19,9 +19,28 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from libs.schemas.detection import DetectionFrameSchema, DetectionSchema, BoundingBox
+from dataclasses import dataclass
+from typing import List, Tuple
+
 from services.detection.zones import DEFAULT_ZONES, get_zones_for_point
 from libs.config.settings import settings
+
+
+@dataclass
+class Detection:
+    label: str
+    bbox: List[float]
+    confidence: float
+    center: Tuple[float, float]
+    zones_present: List[str]
+
+
+@dataclass
+class DetectionFrame:
+    frame_id: int
+    detections: List[Detection]
+    timestamp_ms: float
+    camera_id: str = "cam_01"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
