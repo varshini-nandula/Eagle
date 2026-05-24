@@ -40,6 +40,9 @@ class TrackEvent(BaseModel):
     timestamp_ms: float
     zone:        Optional[str]    = None   # zone name or None if not in any zone
     action_hint: ActionHint       = ActionHint.UNKNOWN
+    temporal_action: Optional[str] = None
+    temporal_action_confidence: Optional[float] = None
+    temporal_action_source: Optional[str] = None
     bbox:        list[float]      = Field(default_factory=list)    # [x1,y1,x2,y2]
     center:      tuple[float, float] = (0.0, 0.0)
     dwell_time_seconds: float     = 0.0
@@ -63,9 +66,14 @@ class TrackSequence(BaseModel):
     @property
     def action_summary(self) -> str:
         """Human-readable summary of the action sequence (for LLM prompt)."""
-        actions = [e.action_hint.value for e in self.events]
-        unique  = []
+        actions: list[str] = []
+        for e in self.events:
+            if e.temporal_action:
+                actions.append(e.temporal_action)
+            else:
+                actions.append(e.action_hint.value)
+        unique: list[str] = []
         for a in actions:
             if not unique or unique[-1] != a:
                 unique.append(a)
-        return " → ".join(unique)
+        return " → ".join(unique) if unique else "unknown"
