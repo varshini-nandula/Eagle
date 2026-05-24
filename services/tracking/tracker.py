@@ -18,7 +18,7 @@ import logging
 import time
 from pathlib import Path
 
-from Eagle.libs.config import settings
+from libs.config.settings import settings
 import cv2
 import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
