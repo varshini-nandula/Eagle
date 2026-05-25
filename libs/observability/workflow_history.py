@@ -31,5 +31,9 @@ class WorkflowHistoryManager:
             record.retry_count,
         )
 
-        with open(self.log_path, "a", encoding="utf-8") as fh:
+try:
+    with open(self.log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, default=str) + "\n")
+            
+except Exception as e:
+            logger.warning(f"Failed to persist workflow history: {e}")
