@@ -28,3 +28,5 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          exit-code: 1  # Fail the build if vulnerabilities are found
+          severity: CRITICAL,HIGH  # Focus on actionable vulnerabilities
