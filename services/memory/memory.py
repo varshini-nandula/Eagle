@@ -227,27 +227,71 @@ class MemoryService:
 
     @staticmethod
     def _track_key(camera_id: str, track_id: int) -> str:
-        """Return the Redis key for a per-track state blob."""
+        """
+        Generate Redis key for storing per-track state.
+
+        Args:
+            camera_id (str): Camera identifier.
+            track_id (int): Track identifier.
+
+        Returns:
+            str: Redis key in format track:{camera_id}:{track_id}
+        """
+
         return f"track:{camera_id}:{track_id}"
 
     @staticmethod
     def _event_key(camera_id: str, frame_id: int) -> str:
-        """Return the Redis key for a per-frame event list."""
+        """
+        Generate Redis key for storing per-frame lifecycle events.
+
+        Args:
+            camera_id (str): Camera identifier.
+            frame_id (int): Frame number.
+
+        Returns:
+            str: Redis key in format event:{camera_id}:{frame_id}
+        """
+
         return f"event:{camera_id}:{frame_id}"
 
     def _load_record(self, camera_id: str, track_id: int) -> Optional[dict]:
-        """Load and deserialise a track record from Redis, or return None."""
+        """
+        Load a track record from Redis and convert it to a Python dictionary.
+
+        This method retrieves stored tracking information for a given
+        camera_id and track_id combination.
+
+        Args:
+            camera_id (str): Camera identifier.
+            track_id (int): Unique tracking ID.
+
+        Returns:
+            Optional[dict]: Track record if found, otherwise None.
+        """
+
         raw = self._r.get(self._track_key(camera_id, track_id))
         return json.loads(raw) if raw else None
 
     def _update_record(self, event: TrackLifecycleEvent, state: str) -> None:
         """
-        Update an existing track record's state and timing fields in Redis.
+        Update an existing track record in Redis with new lifecycle state.
+
+        This updates:
+        - Track state (LOST / DEAD / ACTIVE)
+        - Last seen frame
+        - Last seen timestamp
+        - Dwell time
+        - Zones visited
 
         Args:
-            event: Source lifecycle event supplying updated field values.
-            state: New state string (e.g. 'LOST', 'DEAD').
+            event (TrackLifecycleEvent): Lifecycle event containing update data.
+            state (str): New state to assign to the track.
+
+        Returns:
+            None
         """
+
         record = self._load_record(event.camera_id, event.track_id) or {}
         record.update(
             {
@@ -270,12 +314,22 @@ class MemoryService:
         global_id: Optional[str],
     ) -> None:
         """
-        Append a lifecycle event dict to the per-frame Redis event log.
+        Append a lifecycle event to Redis event history.
+
+        Stores per-frame event logs including:
+        - Event type (BORN / LOST / DEAD)
+        - Track ID
+        - Global ID (if available)
+        - Timestamp and metadata
 
         Args:
-            event:     Source lifecycle event.
-            global_id: Assigned global identity string, or None.
+            event (TrackLifecycleEvent): Source lifecycle event.
+            global_id (Optional[str]): Global identity assigned to track.
+
+        Returns:
+            None
         """
+        
         key = self._event_key(event.camera_id, event.frame_id)
         raw = self._r.get(key)
         evts: list[dict] = json.loads(raw) if raw else []
