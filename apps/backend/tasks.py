@@ -103,7 +103,6 @@ def analyze_sequence(track_id: int):
         }
         
     except Exception as e:
-
             workflow_failures_total.inc()
 
             duration = time.time() - start_time
