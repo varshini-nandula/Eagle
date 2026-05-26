@@ -71,51 +71,15 @@ It uses a multimodal AI pipeline to produce:
 
 ## 🏗️ System Architecture
 
-```
-┌─────────────────────────────────────┐
-│        CAMERA STREAM / VIDEO        │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   DETECTION SERVICE  (YOLOv8/v9)   │  services/detection/
-│   Person, Door, Keypad, Bag ...    │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   TRACKING SERVICE  (ByteTrack)    │  services/tracking/
-│   Person ID: #1, Trajectory, Age  │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   TEMPORAL MEMORY  (Redis Buffer)  │  services/memory/
-│   Last 50 events per track_id      │
-└──────────────────┬──────────────────┘
-                   │
-         ⚡ Event Trigger
-         (only on zone entry, not every frame)
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   VLM CAPTIONING  (LLaVA-Next)     │  services/reasoning/
-│   "Describe what person is doing"  │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   LLM REASONING LAYER              │
-│   Label: Suspicious / Normal       │
-│   Reason: Natural language text    │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   FASTAPI BACKEND  +  NEXT.JS UI   │  apps/
-│   REST API  |  Real-time Dashboard │
-└─────────────────────────────────────┘
-```
+Detailed pipeline documentation is available in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+The architecture covers:
+
+- Detection → Tracking → Temporal Memory → Reasoning pipeline
+- Event-triggered VLM execution
+- Redis memory design
+- FastAPI + Next.js integration
+- Full component and data-flow reference
 
 ### Service Breakdown
 
