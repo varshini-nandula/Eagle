@@ -18,6 +18,11 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from libs.schemas.detection import DetectionFrameSchema as DetectionFrame, DetectionSchema as Detection, BoundingBox
+from services.detection.zones import get_zones, get_zones_for_point
+from services.reasoning.scene_graph import SceneGraphBuilder
+from services.reasoning.prompts import build_reasoning_prompt
+from libs.schemas.detection import DetectionFrameSchema, DetectionSchema, BoundingBox
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -96,6 +101,8 @@ class Detector:
         """
         results = self.model(frame, conf=self.conf, device=self.device, verbose=False)
         detections: list[DetectionSchema] = []
+
+        active_zones = get_zones()
 
         for box, conf, cls_id in zip(
             results[0].boxes.xyxy.cpu().numpy(),

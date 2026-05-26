@@ -16,7 +16,6 @@ class TrackState(str, Enum):
 class TrajectoryPoint(BaseModel):
     """A single spatial-temporal coordinate snapshot representing an object's historical location."""
     x: float
-    x: float
     y: float
     frame_id: int
     interpolated: bool = False
