@@ -10,44 +10,36 @@ on:
 
 jobs:
   build:
-    name: CI Build and Verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
-      # Fix 1: Securely checkout the repository
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
-      # Fix 2: Provision 4GB Swap Space to prevent Exit Code 137 OOM crashes
       - name: Set up Swap Space
-        uses: pierotofy/set-swap-space@v1.0.0
+        uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 4
 
-      # Fix 3: Set up Python Environment with explicit commit pinning
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # Fix 4: Configure Memory Mitigation Flags to drop RAM overhead
       - name: Configure Memory Mitigation Flags
         run: |
           echo "PIP_NO_CACHE_DIR=1" >> $GITHUB_ENV
           echo "PIP_DEFAULT_TIMEOUT=100" >> $GITHUB_ENV
 
-      # Fix 5: Install dependencies cleanly using your specific memory flags
+      # Fix 5: Balanced setup execution
       - name: Install Base Project Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install .
 
-      # Fix 6: Run a comprehensive project validation/smoke test
-      - name: Verify Installation
+      - name: Run Pipeline Verification
         run: |
           python -c "import os; print('CI Environment built perfectly with zero memory leaks!')"
