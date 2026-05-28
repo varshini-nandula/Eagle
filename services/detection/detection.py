@@ -64,8 +64,8 @@ class Detector:
     def __init__(
         self,
         model_name: str = settings.detector_model,
-        confidence_threshold: float = 0.45,
-        device: str = "cpu",
+        confidence_threshold: float = settings.detection_confidence_threshold,
+        device: str = settings.detector_device,
     ) -> None:
         logger.info(f"Loading YOLO model: {model_name} on {device}")
         self.model = YOLO(model_name)
@@ -95,6 +95,13 @@ class Detector:
         ):
             label = self.model.names[int(cls_id)]
             if label not in self.TARGET_LABELS:
+                continue
+
+            if float(conf) < self.conf:
+                logger.debug(
+                    f"Dropped detection: class={label}, conf={float(conf):.2f} "
+                    f"(below threshold {self.conf})"
+                )
                 continue
 
             x1, y1, x2, y2 = box.tolist()
@@ -174,7 +181,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Agentic Vision detection demo")
     parser.add_argument("--source", default="0", help="Video file path or camera index")
     parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
-    parser.add_argument("--conf", type=float, default=0.45, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=settings.detection_confidence_threshold, help="Confidence threshold")
     parser.add_argument("--output", default=None, help="Optional output video path")
     args = parser.parse_args()
 
