@@ -278,7 +278,7 @@ ollama pull llava:latest
 ### 6. Run detection on a sample video
 
 ```bash
-python services/detection/detection.py --source data/sample_videos/sample.mp4
+python -m services.detection.detection --source data/sample_videos/sample.mp4
 ```
 ### Detection Demo
 
