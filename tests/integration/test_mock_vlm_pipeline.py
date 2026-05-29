@@ -22,7 +22,6 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -334,7 +333,6 @@ class TestSettingsVlmProvider:
     def test_vlm_provider_env_override(self, monkeypatch):
         monkeypatch.setenv("VLM_PROVIDER", "mock")
         # Re-instantiate to pick up the env var.
-        from pydantic_settings import BaseSettings, SettingsConfigDict
         from libs.config.settings import Settings
 
         s = Settings()

@@ -1,5 +1,5 @@
 """
-apps/backend/main.py — Eagle FastAPI backend entry point.
+apps/backend/main.py – Eagle FastAPI backend entry point.
 
 Phase 5 scaffold: health check + active tracks endpoint.
 
@@ -23,42 +23,39 @@ import json
 import logging
 import os
 
-<<<<<<< HEAD
 import redis as redis_sync
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from prometheus_client import generate_latest
-=======
-from apps.backend.routes.zones import router as zones_router
-
-app = FastAPI()
->>>>>>> 4d99088 (feat: adaptive anomaly baseline per zone using Welford's algorithm)
 
 from apps.backend.routes.cameras import identity_router, router as cameras_router
 from apps.backend.routes.feedback import router as feedback_router
+from apps.backend.routes.zones import router as zones_router
 from libs.observability.metrics import frames_processed_total
 from services.memory.memory import MemoryService
 from services.tracking.cross_camera_reid import CrossCameraReID
 
-<<<<<<< HEAD
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Eagle Surveillance API",
-    description="Real-time semantic surveillance — detection, tracking, and reasoning.",
+    description="Real-time semantic surveillance – detection, tracking, and reasoning.",
     version="0.1.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
+    allow_origins=os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Redis (sync client for simple health / track-list queries) ────────────────
+# ── Redis ─────────────────────────────────────────────────────────────────────
 
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
@@ -67,41 +64,22 @@ _redis: redis_sync.Redis | None = None
 
 def _get_redis() -> redis_sync.Redis | None:
     """
-    Return a lazily-initialised sync Redis client, or None if the connection
-    has never succeeded.  Errors are logged but never raised — callers must
-    handle a None return.
+    Return a lazily-initialised sync Redis client, or None if unavailable.
+    Errors are logged but never raised — callers must handle a None return.
     """
     global _redis
     if _redis is None:
-=======
-try:
-    r = redis.from_url(REDIS_URL)
-    r.ping()
-    app.state.redis = r
-    print(f"[INFO] Connected to Redis at {REDIS_URL}")
-except (redis.RedisError, redis.ConnectionError) as e:
-    print(f"[WARN] Redis not available: {e}")
-    r = None
-
-app.include_router(zones_router)
-
-@app.get("/health")
-def health():
-    redis_status = "healthy"
-    if r is not None:
->>>>>>> 4d99088 (feat: adaptive anomaly baseline per zone using Welford's algorithm)
         try:
             client = redis_sync.from_url(REDIS_URL, socket_connect_timeout=2)
             client.ping()
             _redis = client
-            
-            # Setup services on app.state
+
             reid_engine = CrossCameraReID(client)
             memory_service = MemoryService(client, reid_engine)
             app.state.redis = client
             app.state.reid = reid_engine
             app.state.memory = memory_service
-            
+
             logger.info("Redis connected at %s", REDIS_URL)
         except Exception as exc:
             logger.warning("Redis unavailable: %s", exc)
@@ -109,6 +87,7 @@ def health():
             app.state.reid = None
             app.state.memory = None
     return _redis
+
 
 # Attempt connection at startup (non-fatal if Redis is down).
 _get_redis()
@@ -118,49 +97,42 @@ _get_redis()
 app.include_router(cameras_router)
 app.include_router(identity_router)
 app.include_router(feedback_router)
+app.include_router(zones_router)
 
 
-# ── Health endpoint ───────────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["ops"])
 async def health() -> dict:
-    """
-    Return server and Redis health.
-    """
+    """Return server and Redis health."""
     r = _get_redis()
     if r is None:
         return {"status": "degraded", "redis": "unavailable"}
-
     try:
         r.ping()
         return {"status": "ok", "redis": "connected"}
     except Exception as exc:
-        # Redis was reachable at startup but is now down.
         global _redis
-        _redis = None          # force reconnect attempt on next call
+        _redis = None
         app.state.redis = None
         app.state.reid = None
         app.state.memory = None
         return {"status": "degraded", "redis": str(exc)}
 
 
-# ── Tracks endpoint ───────────────────────────────────────────────────────────
+# ── Tracks ────────────────────────────────────────────────────────────────────
 
 @app.get("/tracks", tags=["tracks"])
 async def list_active_tracks(
     camera_id: str = Query(default="cam_01", description="Camera identifier"),
 ) -> dict:
-    """
-    Return active track IDs for a camera.
-    """
+    """Return active track IDs for a camera."""
     r = _get_redis()
     if r is None:
         return {"camera_id": camera_id, "track_ids": [], "error": "Redis unavailable"}
-
     try:
         pattern = f"track:{camera_id}:*"
         keys: list[bytes] = r.keys(pattern)
-
         active_ids: list[int] = []
         for key in keys:
             raw = r.get(key)
@@ -172,15 +144,13 @@ async def list_active_tracks(
                 continue
             if record.get("state") == "ACTIVE":
                 active_ids.append(int(record["track_id"]))
-
         return {"camera_id": camera_id, "track_ids": sorted(active_ids)}
-
     except Exception as exc:
         logger.error("Failed to list tracks for %s: %s", camera_id, exc)
         return {"camera_id": camera_id, "track_ids": [], "error": str(exc)}
 
 
-# ── Metrics endpoint ──────────────────────────────────────────────────────────
+# ── Metrics ───────────────────────────────────────────────────────────────────
 
 @app.get("/metrics", tags=["ops"], include_in_schema=False)
 async def metrics() -> Response:
