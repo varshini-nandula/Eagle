@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "track-events"
 
+    @property
+    def REDIS_URL(self) -> str:
+        """Backward-compatible uppercase alias for redis_url."""
+        return self.redis_url
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
