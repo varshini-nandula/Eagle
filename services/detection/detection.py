@@ -22,11 +22,9 @@ from libs.schemas.detection import DetectionFrameSchema as DetectionFrame, Detec
 from services.detection.zones import get_zones, get_zones_for_point
 from services.reasoning.scene_graph import SceneGraphBuilder
 from services.reasoning.prompts import build_reasoning_prompt
-from libs.schemas.detection import DetectionFrameSchema, DetectionSchema, BoundingBox
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from services.detection.zones import DEFAULT_ZONES, get_zones_for_point
 from libs.config.settings import settings
 
 
@@ -70,16 +68,13 @@ class Detector:
     def __init__(
         self,
         model_name: str = settings.detector_model,
-        confidence_threshold: float = 0.45,
-        device: str = "cpu",
+        confidence_threshold: float = settings.detection_confidence_threshold,
+        device: str = settings.detector_device,
     ) -> None:
-        """Initialize the Detector with a YOLO model.
-
-        Args:
-            model_name: Name or path of the YOLO model file.
-            confidence_threshold: Minimum confidence score to keep a detection.
-            device: Inference device, e.g. 'cpu' or 'cuda'.
-        """
+        if not 0.0 <= confidence_threshold <= 1.0:
+            raise ValueError(
+                f"confidence_threshold must be between 0.0 and 1.0, got {confidence_threshold}"
+            )
         logger.info(f"Loading YOLO model: {model_name} on {device}")
         self.model = YOLO(model_name)
         self.conf = confidence_threshold
@@ -99,8 +94,8 @@ class Detector:
             detector = Detector()
             det_frame = detector.detect(frame, frame_id=42)
         """
-        results = self.model(frame, conf=self.conf, device=self.device, verbose=False)
-        detections: list[DetectionSchema] = []
+        results = self.model(frame, device=self.device, verbose=False)
+        detections: list[Detection] = []
 
         active_zones = get_zones()
 
@@ -111,6 +106,13 @@ class Detector:
         ):
             label = self.model.names[int(cls_id)]
             if label not in self.TARGET_LABELS:
+                continue
+
+            if float(conf) < self.conf:
+                logger.debug(
+                    f"Dropped detection: class={label}, conf={float(conf):.2f} "
+                    f"(below threshold {self.conf})"
+                )
                 continue
 
             x1, y1, x2, y2 = box.tolist()
@@ -204,7 +206,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Agentic Vision detection demo")
     parser.add_argument("--source", default="0", help="Video file path or camera index")
     parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
-    parser.add_argument("--conf", type=float, default=0.45, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=settings.detection_confidence_threshold, help="Confidence threshold")
     parser.add_argument("--output", default=None, help="Optional output video path")
     args = parser.parse_args()
 

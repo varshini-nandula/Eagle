@@ -57,7 +57,7 @@ class PipelineBenchmark:
         
         # Cross-Machine Reproducibility Check: Video download automation fallback
         if not os.path.exists(video_source) and video_source == "data/sample_videos/sample.mp4":
-            print(f"📥 Local video file nahi mili. Mentor/CI ke liye download automation start ho raha hai...")
+            print("📥 Local video file nahi mili. Mentor/CI ke liye download automation start ho raha hai...")
             try:
                 os.makedirs(os.path.dirname(video_source), exist_ok=True)
                 public_url = "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/bolt-detection.mp4"

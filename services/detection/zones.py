@@ -9,7 +9,6 @@ import logging
 import cv2
 import numpy as np
 from libs.config.zone_loader import ZoneConfigLoader
-import numpy as np
 from typing import List, Tuple
 
 

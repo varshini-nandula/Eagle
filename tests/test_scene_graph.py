@@ -1,7 +1,6 @@
 """
 Unit tests for SceneGraph builder and serializer.
 """
-import pytest
 from types import SimpleNamespace
 from services.reasoning.scene_graph import SceneGraph
 from libs.schemas.graph import GraphNode, GraphEdge, NodeType, EdgeType

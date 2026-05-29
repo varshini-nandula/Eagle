@@ -4,6 +4,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Environment-backed connection / API settings
+    redis_url: str = "redis://localhost:6379/0"
+    ollama_host: str = "http://localhost:11434"
+
+    # YOLO / detection settings (kept for backward compatibility alongside existing names)
+    yolo_model: str = "yolov8n.pt"
+    detection_confidence: float = 0.4
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+
     # Action classifier thresholds
     lingering_threshold_sec: float = 5.0
     movement_threshold_px: float = 10.0

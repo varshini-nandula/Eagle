@@ -4,7 +4,9 @@ All Redis tests use fakeredis — no real Redis server needed.
 """
 from __future__ import annotations
 
-import sys, os, time
+import sys
+import os
+import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -187,7 +189,7 @@ def test_get_sequence_last_n(store):
 
 def test_zone_entry_hint():
     from services.memory.action_classifier import classify_action
-    from libs.schemas.tracking import TrackedObject, TrackState, TrajectoryPoint
+    from libs.schemas.tracking import TrackedObject, TrackState
 
     obj = TrackedObject(
         track_id=1, label="person", bbox=[100,80,200,300],
@@ -389,4 +391,20 @@ def test_near_keypad_hint():
     hint = classify_action(obj, None, registry)
     assert hint == ActionHint.NEAR_KEYPAD
 
+
+# ── reasoning_result_id tests ──────────────────────────────────────────────────
+
+def test_reasoning_result_id_absent_by_default():
+    """reasoning_result_id should default to None when no reasoning has run."""
+    evt = make_event(50, 0)
+    assert evt.reasoning_result_id is None
+
+
+def test_reasoning_result_id_present_after_set(store):
+    """reasoning_result_id should be stored and retrieved correctly."""
+    evt = make_event(51, 0, zone="restricted_door", hint=ActionHint.ZONE_ENTRY)
+    evt.reasoning_result_id = "test-alert-id-123"
+    store.store_event(evt)
+    seq = store.get_sequence(track_id=51)
+    assert seq.events[0].reasoning_result_id == "test-alert-id-123"
 
