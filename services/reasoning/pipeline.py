@@ -109,6 +109,14 @@ class ReasoningPipeline:
         self._store_alert(result)
         self._deduplicator.mark_alerted(track_id, zone)
 
+        # Back-link the trigger event to the reasoning result (update in place)
+        if seq.events:
+            trigger_event = seq.events[-1]
+            trigger_event.reasoning_result_id = result.alert_id
+            key = self._store._events_key(trigger_event.track_id)
+            payload = trigger_event.model_dump() if hasattr(trigger_event, "model_dump") else trigger_event.dict()
+            self._store._r.lset(key, -1, json.dumps(payload))
+
         # Non-blocking push to SSE queue
         try:
             alert_queue.put_nowait(result)

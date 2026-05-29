@@ -392,3 +392,19 @@ def test_near_keypad_hint():
     assert hint == ActionHint.NEAR_KEYPAD
 
 
+# ── reasoning_result_id tests ──────────────────────────────────────────────────
+
+def test_reasoning_result_id_absent_by_default():
+    """reasoning_result_id should default to None when no reasoning has run."""
+    evt = make_event(50, 0)
+    assert evt.reasoning_result_id is None
+
+
+def test_reasoning_result_id_present_after_set(store):
+    """reasoning_result_id should be stored and retrieved correctly."""
+    evt = make_event(51, 0, zone="restricted_door", hint=ActionHint.ZONE_ENTRY)
+    evt.reasoning_result_id = "test-alert-id-123"
+    store.store_event(evt)
+    seq = store.get_sequence(track_id=51)
+    assert seq.events[0].reasoning_result_id == "test-alert-id-123"
+
