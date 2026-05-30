@@ -20,7 +20,7 @@ from ultralytics import YOLO
 
 from libs.schemas.detection import DetectionFrameSchema as DetectionFrame, DetectionSchema as Detection, BoundingBox
 from services.detection.zones import get_zones, get_zones_for_point
-from services.reasoning.scene_graph import SceneGraphBuilder
+from services.reasoning.scene_graph import SceneGraph
 from services.reasoning.prompts import build_reasoning_prompt
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -210,7 +210,7 @@ def main() -> None:
             break
 
         det_frame = detector.detect(frame, frame_id=frame_id)
-        builder = SceneGraphBuilder(det_frame)
+        builder = SceneGraph(det_frame)
         
         builder.build_graph()
         graph_text = builder.serialize_graph()

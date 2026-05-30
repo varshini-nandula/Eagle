@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from libs.schemas.memory import ActionHint
-from services.reasoning.prompts import build_captioning_prompt
+from services.reasoning.prompts import build_reasoning_prompt
 
 logger = logging.getLogger(__name__)
 
