@@ -7,11 +7,6 @@ Prompt builders for LLM-based surveillance reasoning.
 # Scene Graph Prompt Integration
 # ---------------------------------------------------------------------------
 
-from services.reasoning.scene_graph import SceneGraph
-
-
-from services.reasoning.scene_graph import SceneGraph
-
 
 def build_reasoning_prompt(*args) -> str:
     """
@@ -62,3 +57,18 @@ Dwell Time:
     raise TypeError(
         f"build_reasoning_prompt expected 2 or 5 arguments, got {len(args)}"
     )
+
+def build_captioning_prompt(allowed_labels=None) -> str:
+    """
+    Build captioning prompt for VLMs.
+    """
+
+    if allowed_labels:
+        labels = ", ".join(allowed_labels)
+        return (
+            f"Describe the scene. "
+            f"Focus on: {labels}. "
+            f"Be concise."
+        )
+
+    return "Describe the scene in detail."
