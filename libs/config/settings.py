@@ -5,7 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Environment-backed connection / API settings
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://localhost:6379"
+    vlm_provider: str = "mock"
+    llm_provider: str = "mock"
     ollama_host: str = "http://localhost:11434"
 
     # YOLO / detection settings (kept for backward compatibility alongside existing names)
@@ -32,6 +34,14 @@ class Settings(BaseSettings):
 
     reasoning_dwell_threshold_seconds: float = 5.0
     reasoning_cooldown_seconds: float = 5.0
+
+    # New reasoning / alert settings
+    reasoning_trigger_sec: float = 5.0
+    ring_buffer_max: int = 50
+    alert_dedup_window: int = 300
+    snapshot_dir: str = "/tmp/eagle_snapshots"
+    cors_origins: list[str] = ["http://localhost:5173"]  # Vite dev
+    max_alerts_page: int = 50
 
     # Action classifier settings
     lingering_threshold_sec: float = 10.0
