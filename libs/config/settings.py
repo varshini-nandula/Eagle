@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     tracker_max_cosine_distance: float = 0.4
     camera_id: str = "cam_01"
 
+    # Action classifier settings
+    lingering_threshold_sec: float = 5.0
+    movement_threshold_px: float = 15.0
+    near_keypad_dist_px: float = 75.0
+    keypad_center_x: float = 500.0
+    keypad_center_y: float = 500.0
+
+    # Reasoning trigger settings
     reasoning_dwell_threshold_seconds: float = 5.0
     reasoning_cooldown_seconds: float = 5.0
 
@@ -45,12 +53,10 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "track-events"
 
-    @property
-    def REDIS_URL(self) -> str:
-        """Backward-compatible uppercase alias for redis_url."""
-        return self.redis_url
-
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
 
 settings = Settings()
