@@ -113,3 +113,7 @@ else:
         workflow_duration_seconds = REGISTRY._names_to_collectors[
             "agentic_workflow_duration_seconds"
         ]
+
+        # Backwards-compatible aliases used by API routes
+        INGEST_COUNTER = frames_processed_total
+        REASONING_TRIGGER_COUNTER = reasoning_triggers_total

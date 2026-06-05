@@ -7,7 +7,6 @@ from celery import Celery
 
 # Import existing analysis logic
 # Ensure these are available via root context
-from services.reasoning.scene_graph import SceneGraphBuilder
 from services.reasoning.prompts import build_reasoning_prompt
 from libs.observability.failure_classifier import classify_failure
 from libs.observability.workflow_history import WorkflowHistoryManager

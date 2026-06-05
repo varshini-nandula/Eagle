@@ -13,7 +13,6 @@ Usage (API):
 from __future__ import annotations
 import argparse
 import logging
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -21,13 +20,11 @@ from ultralytics import YOLO
 
 from libs.schemas.detection import DetectionFrameSchema as DetectionFrame, DetectionSchema as Detection, BoundingBox
 from services.detection.zones import get_zones, get_zones_for_point
-from services.reasoning.scene_graph import SceneGraphBuilder
+from services.reasoning.scene_graph import SceneGraph
 from services.reasoning.prompts import build_reasoning_prompt
-from libs.schemas.detection import DetectionFrameSchema, DetectionSchema, BoundingBox
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from services.detection.zones import DEFAULT_ZONES, get_zones_for_point
 from libs.config.settings import settings
 
 
@@ -64,8 +61,8 @@ class Detector:
     def __init__(
         self,
         model_name: str = settings.detector_model,
-        confidence_threshold: float = 0.45,
-        device: str = "cpu",
+        confidence_threshold: float = settings.detection_confidence_threshold,
+        device: str = settings.detector_device,
     ) -> None:
         """Initialize the YOLO detector.
 
@@ -100,7 +97,7 @@ class Detector:
         detections to supported target labels, assigns zone memberships,
         and returns the results in a structured DetectionFrame object.
         """
-        results = self.model(frame, conf=self.conf, device=self.device, verbose=False)
+        results = self.model(frame, device=self.device, verbose=False)
         detections: list[Detection] = []
 
         active_zones = get_zones()
@@ -112,6 +109,13 @@ class Detector:
         ):
             label = self.model.names[int(cls_id)]
             if label not in self.TARGET_LABELS:
+                continue
+
+            if float(conf) < self.conf:
+                logger.debug(
+                    f"Dropped detection: class={label}, conf={float(conf):.2f} "
+                    f"(below threshold {self.conf})"
+                )
                 continue
 
             x1, y1, x2, y2 = box.tolist()
@@ -223,7 +227,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Agentic Vision detection demo")
     parser.add_argument("--source", default="0", help="Video file path or camera index")
     parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
-    parser.add_argument("--conf", type=float, default=0.45, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=settings.detection_confidence_threshold, help="Confidence threshold")
     parser.add_argument("--output", default=None, help="Optional output video path")
     args = parser.parse_args()
 
@@ -251,7 +255,7 @@ def main() -> None:
             break
 
         det_frame = detector.detect(frame, frame_id=frame_id)
-        builder = SceneGraphBuilder(det_frame)
+        builder = SceneGraph(det_frame)
         
         builder.build_graph()
         graph_text = builder.serialize_graph()

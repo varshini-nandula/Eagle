@@ -6,7 +6,6 @@ and serializes it into an LLM-ready prompt snippet.
 from __future__ import annotations
 
 import networkx as nx
-from typing import Optional
 from libs.schemas.graph import GraphNode, GraphEdge, NodeType, EdgeType
 
 

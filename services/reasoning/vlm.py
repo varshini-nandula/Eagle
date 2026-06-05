@@ -169,7 +169,8 @@ class QwenVLCaptioner(BaseCaptioner):
         if not self._available:
             return self._fallback.caption(frame, action_hint, allowed_labels)
 
-        import tempfile, pathlib
+        import tempfile
+        import pathlib
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             cv2.imwrite(f.name, frame)
             tmp_path = f.name
@@ -195,8 +196,13 @@ def get_captioner(provider: str | None = None) -> BaseCaptioner:
     VLM_PROVIDER=qwen    → QwenVLCaptioner
     """
     p = (provider or VLM_PROVIDER).lower()
-    if p == "mock":   return MockVLMCaptioner()
-    if p == "ollama": return OllamaVLMCaptioner()
-    if p == "qwen":   return QwenVLCaptioner()
+    if p == "mock":
+        return MockVLMCaptioner()
+
+    if p == "ollama":
+        return OllamaVLMCaptioner()
+
+    if p == "qwen":
+        return QwenVLCaptioner()
     raise ValueError(f"Unknown VLM_PROVIDER: '{p}'. "
                      f"Choose from: mock, ollama, qwen")

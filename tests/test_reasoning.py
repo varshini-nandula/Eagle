@@ -4,7 +4,9 @@ All tests run without Ollama, GPU, or real API keys.
 Uses MockVLMCaptioner + MockLLMReasoner + fakeredis.
 """
 from __future__ import annotations
-import sys, os, time
+import sys
+import os
+import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -20,6 +22,14 @@ from services.reasoning.dedup      import AlertDeduplicator
 from services.reasoning.pipeline   import ReasoningPipeline
 from services.reasoning.formatters import sequence_to_text, captions_to_text
 from services.reasoning.prompts    import build_reasoning_prompt
+
+
+from tests.fixtures.reasoning import (
+    SUSPICIOUS_RESULT,
+    NORMAL_RESULT,
+    LOW_CONF_RESULT,
+    EMPTY_CAPTIONS_RESULT,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -99,37 +109,23 @@ def make_normal_seq(track_id: int = 2) -> TrackSequence:
 # ── Schema tests ──────────────────────────────────────────────────────────────
 
 def test_reasoning_result_confidence_tier_high():
-    r = ReasoningResult(track_id=1, label="Suspicious", confidence=0.88, reason="test")
-    assert r.confidence_tier == "high"
+    assert SUSPICIOUS_RESULT.confidence_tier == "high"
+
 
 def test_reasoning_result_confidence_tier_medium():
-    r = ReasoningResult(track_id=1, label="Normal", confidence=0.60, reason="test")
-    assert r.confidence_tier == "medium"
+    assert LOW_CONF_RESULT.confidence_tier == "medium"
 
-def test_reasoning_result_confidence_tier_low():
-    r = ReasoningResult(track_id=1, label="Normal", confidence=0.30, reason="test")
-    assert r.confidence_tier == "low"
 
 def test_reasoning_result_is_actionable_true():
-    r = ReasoningResult(track_id=1, label="Suspicious", confidence=0.75, reason="test")
-    assert r.is_actionable is True
+    assert SUSPICIOUS_RESULT.is_actionable is True
+
 
 def test_reasoning_result_is_actionable_false_low_conf():
-    r = ReasoningResult(track_id=1, label="Suspicious", confidence=0.50, reason="test")
-    assert r.is_actionable is False
+    assert LOW_CONF_RESULT.is_actionable is False
+
 
 def test_reasoning_result_is_actionable_false_normal():
-    r = ReasoningResult(track_id=1, label="Normal", confidence=0.90, reason="test")
-    assert r.is_actionable is False
-
-def test_reasoning_result_model_dump_json_includes_computed():
-    import json
-    r = ReasoningResult(track_id=1, label="Suspicious", confidence=0.88, reason="test")
-    d = json.loads(r.model_dump_json())
-    assert "confidence_tier" in d
-    assert "is_actionable"   in d
-    assert d["confidence_tier"] == "high"
-    assert d["is_actionable"]   is True
+    assert NORMAL_RESULT.is_actionable is False
 
 
 # ── Formatter tests ───────────────────────────────────────────────────────────

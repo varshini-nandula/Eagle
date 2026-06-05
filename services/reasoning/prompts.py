@@ -7,25 +7,68 @@ Prompt builders for LLM-based surveillance reasoning.
 # Scene Graph Prompt Integration
 # ---------------------------------------------------------------------------
 
-from services.reasoning.scene_graph import SceneGraph
 
-
-def build_reasoning_prompt(event_description: str, scene_graph: SceneGraph) -> str:
+def build_reasoning_prompt(*args) -> str:
     """
-    Combine a scene graph snapshot with a natural-language event description
-    into a single structured prompt for LLM reasoning.
+    Backward-compatible prompt builder.
 
-    Keeps total context compact and well under model context limits.
+    Supports:
+    1. build_reasoning_prompt(event_description, scene_graph)
+    2. build_reasoning_prompt(summary, captions, camera_id, zone_name, dwell_time)
     """
-    graph_context = scene_graph.to_prompt_str()
 
-    prompt = f"""{graph_context}
+    # New API
+    if len(args) == 2:
+        event_description, scene_graph = args
+
+        graph_context = scene_graph.to_prompt_str()
+
+        return f"""{graph_context}
 
 Event description:
 {event_description}
 
 Based on the scene graph and event above, analyze whether this activity is suspicious.
 Consider spatial relationships, zone access, and object interactions.
-Be concise and structured in your response."""
+Be concise and structured in your response.
+"""
 
-    return prompt
+    # Legacy API used by tests
+    if len(args) == 5:
+        summary, captions, camera_id, zone_name, dwell_time = args
+
+        return f"""
+Summary:
+{summary}
+
+Captions:
+{captions}
+
+Camera:
+{camera_id}
+
+Zone:
+{zone_name}
+
+Dwell Time:
+{dwell_time}
+"""
+
+    raise TypeError(
+        f"build_reasoning_prompt expected 2 or 5 arguments, got {len(args)}"
+    )
+
+def build_captioning_prompt(allowed_labels=None) -> str:
+    """
+    Build captioning prompt for VLMs.
+    """
+
+    if allowed_labels:
+        labels = ", ".join(allowed_labels)
+        return (
+            f"Describe the scene. "
+            f"Focus on: {labels}. "
+            f"Be concise."
+        )
+
+    return "Describe the scene in detail."

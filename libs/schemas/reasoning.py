@@ -18,8 +18,12 @@ class ReasoningResult(BaseModel):
 
     @property
     def confidence_tier(self) -> Literal["high", "medium", "low"]:
-        if self.confidence >= 0.75: return "high"
-        if self.confidence >= 0.50: return "medium"
+        if self.confidence >= 0.75:
+            return "high"
+
+        if self.confidence >= 0.50:
+            return "medium"
+
         return "low"
 
     @property

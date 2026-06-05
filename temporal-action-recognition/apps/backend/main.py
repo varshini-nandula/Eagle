@@ -7,7 +7,6 @@ from fastapi.responses import Response
 from prometheus_client import generate_latest
 
 from apps.backend.routes.cameras import identity_router, router as cameras_router
-from libs.observability.metrics import frames_processed_total
 from services.memory.memory import MemoryService
 from services.tracking.cross_camera_reid import CrossCameraReID
 

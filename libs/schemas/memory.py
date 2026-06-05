@@ -47,6 +47,7 @@ class TrackEvent(BaseModel):
     center:      tuple[float, float] = (0.0, 0.0)
     dwell_time_seconds: float     = 0.0
     confidence:  float            = 0.0
+    reasoning_result_id: Optional[str] = None
 
 
 class TrackSequence(BaseModel):
