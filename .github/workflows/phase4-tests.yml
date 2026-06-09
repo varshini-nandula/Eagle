@@ -40,7 +40,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install fastapi pydantic pydantic-settings redis fakeredis \
-                      httpx numpy opencv-python-headless pytest ruff
+                      httpx numpy opencv-python-headless pytest ruff \
+                      prometheus-client
 
       - name: Lint
         run: ruff check services/reasoning/ libs/schemas/reasoning.py libs/schemas/memory.py
