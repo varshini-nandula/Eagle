@@ -36,13 +36,9 @@ from typing import Optional
 import numpy as np
 
 from libs.observability.metrics import redis_write_latency
-from libs.schemas.memory import (
-    TrackEvent,
-    TrackSequence,
-)
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
+from libs.schemas.memory import TrackEvent, TrackSequence, ActionHint
 from services.tracking.cross_camera_reid import CrossCameraReID
-from services.memory.baseline import ZoneBaseline
 
 logger = logging.getLogger(__name__)
 

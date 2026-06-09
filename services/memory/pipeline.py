@@ -41,10 +41,26 @@ def process_tracked_frame(
     memory_service: Optional["MemoryService"] = None,
 ) -> list[TrackEvent]:
     """
-    Convert a TrackedFrame into TrackEvents and write them to Redis.
+    Convert a TrackedFrame into TrackEvents and persist them to storage systems.
 
-    When *action_recognizer* and *raw_frame* are provided, temporal action
-    labels are attached to events and published to track records in Redis.
+    This function processes tracking results from the detection pipeline and:
+    - Classifies actions for each detected object
+    - Creates structured TrackEvent objects
+    - Stores events in Redis via MemoryStore or publishes to Kafka
+    - Optionally applies action recognition results for temporal reasoning
+
+    Args:
+        tracked (TrackedFrame): Frame containing detected and tracked objects.
+        store (MemoryStore): Redis-backed event storage system.
+        raw_frame (Optional[np.ndarray]): Original video frame for action recognition.
+        action_recognizer (Optional[ActionRecognizer]): Model used for temporal action detection.
+        memory_service (Optional[MemoryService]): Global memory system for advanced reasoning.
+
+    Returns:
+        list[TrackEvent]: List of processed tracking events generated from this frame.
+
+    Raises:
+        Exception: If action recognition or event processing fails (handled internally and logged).
     """
     events: list[TrackEvent] = []
 

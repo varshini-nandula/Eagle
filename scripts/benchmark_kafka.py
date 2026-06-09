@@ -3,11 +3,9 @@ benchmark_kafka.py — Compare throughput between direct Redis and Kafka ingesti
 """
 from __future__ import annotations
 import sys
-import os
 sys.path.insert(0, ".")
 import time
 import fakeredis
-from unittest.mock import MagicMock
 from libs.schemas.memory import TrackEvent
 
 class RealisticKafkaMock:

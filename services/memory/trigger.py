@@ -2,93 +2,67 @@ from __future__ import annotations
 
 from time import monotonic
 
-from libs.schemas.tracking import TrackLifecycleEvent
 from libs.config.settings import settings
-
+from libs.schemas.memory import (
+    TrackSequence,
+    ActionHint,
+)
 
 _reasoning_cooldowns: dict[int, float] = {}
 
 SUSPICIOUS_ACTIONS = {
-    "LINGERING",
-    "NEAR_KEYPAD",
-    "REPEATED_APPROACH",
+    ActionHint.LINGERING,
+    ActionHint.NEAR_KEYPAD,
+    ActionHint.REPEATED_APPROACH,
 }
 
 
-"""
-Clear cooldown state for a track after reasoning completes.
-"""
-
 def reset_cooldown(track_id: int) -> None:
-    """Clear cooldown state after reasoning completes."""
+    """
+    Clear cooldown state after reasoning completes.
+    """
     _reasoning_cooldowns.pop(track_id, None)
 
-"""
-Determine whether VLM/LLM reasoning should be triggered
-for a suspicious track sequence.
-
-Conditions:
-- track must be inside a restricted zone
-- dwell time must exceed configured threshold
-- at least one suspicious action must exist
-- track must not be inside cooldown window
-"""
 
 def should_trigger_reasoning(
-    event: TrackLifecycleEvent,
-    suspicious_actions: set[str],
+    seq: TrackSequence,
 ) -> bool:
     """
-    Determine whether VLM/LLM reasoning should be triggered
-    for a suspicious track sequence.
+    Determine whether VLM/LLM reasoning should be triggered.
 
     Conditions:
-    - track must be inside a restricted zone
-    - dwell time must exceed configured threshold
-    - at least one suspicious action must exist
-    - track must not be inside cooldown window
+    - Track is inside a restricted zone
+    - Dwell time exceeds configured threshold
+    - At least one suspicious action exists
+    - Track is not inside cooldown window
     """
 
-    if settings.reasoning_dwell_threshold_seconds < 0:
-        raise ValueError(
-            "reasoning_dwell_threshold_seconds must be >= 0"
-        )
-
-    if settings.reasoning_cooldown_seconds < 0:
-        raise ValueError(
-            "reasoning_cooldown_seconds must be >= 0"
-        )
-
-    # Must be inside at least one restricted zone
-    if not event.zones_present:
+    if not seq.events:
         return False
 
-    # Dwell time must exceed configured threshold
-    if (
-        event.dwell_time_seconds
-        < settings.reasoning_dwell_threshold_seconds
-    ):
+    # Zone check
+    if not seq.zones_visited:
         return False
 
-    # At least one suspicious action must exist
-    if not (SUSPICIOUS_ACTIONS & suspicious_actions):
+    # Dwell threshold
+    if seq.total_dwell < settings.reasoning_dwell_threshold_seconds:
+        return False
+
+    # Suspicious action check
+    has_suspicious_action = any(event.action_hint in SUSPICIOUS_ACTIONS for event in seq.events)
+
+    if not has_suspicious_action:
         return False
 
     now = monotonic()
 
-    # Cooldown protection
-    last_trigger = _reasoning_cooldowns.get(event.track_id)
+    # Cooldown check
+    last_trigger = _reasoning_cooldowns.get(seq.track_id)
 
-    if (
-        last_trigger is not None
-        and (
-            now - last_trigger
-            < settings.reasoning_cooldown_seconds
-        )
-    ):
+    if last_trigger is not None and (now - last_trigger < settings.reasoning_cooldown_seconds):
         return False
 
-    # Store latest trigger timestamp
-    _reasoning_cooldowns[event.track_id] = now
+    # Start cooldown
+    _reasoning_cooldowns[seq.track_id] = now
 
     return True

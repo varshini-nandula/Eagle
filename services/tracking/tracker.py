@@ -18,7 +18,7 @@ import logging
 import time
 from pathlib import Path
 
-from Eagle.libs.config import settings
+from libs.config import settings
 import cv2
 import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
@@ -84,12 +84,23 @@ class Tracker:
             event_logger: Optional logger interface for tracking state lifecycle events.
             reid_similarity_threshold: Minimum confidence needed to reconnect an ID via ReID.
             max_interpolation_gap: Maximum frame gap size allowed to fill missing trajectories.
+
+        Returns:
+            None
+
+        Example:
+            >>> tracker = Tracker(
+            ...     fps=30,
+            ...     camera_id="cam_01",
+            ...     max_age=30,
+            ... )
         """
+
         self.fps = fps
         self.camera_id = camera_id
-        self.max_age = max_age  # NEW
+        self.max_age = max_age
         self.REID_SIMILARITY_THRESHOLD = reid_similarity_threshold
-        self.max_interpolation_gap = max_interpolation_gap  # Fixed missing attribute
+        self.max_interpolation_gap = max_interpolation_gap
 
         self._tracker = DeepSort(
             max_age=max_age,
@@ -113,15 +124,28 @@ class Tracker:
         det_frame: DetectionFrameSchema,
         raw_frame: np.ndarray,
     ) -> TrackedFrame:
-        """
-        Ingest a DetectionFrame, run ByteTrack, return TrackedFrame.
+        """Ingest a DetectionFrame, run ByteTrack, and return a TrackedFrame.
+
+        Converts Pydantic detection objects into DeepSort input format, runs
+        the tracker, performs ReID matching for re-appearing tracks, accumulates
+        trajectories with gap interpolation, computes dwell times, assigns zone
+        membership, and emits BORN/LOST/DEAD lifecycle events.
 
         Args:
-            det_frame:  Output of Phase 1 detector (DetectionFrameSchema).
-            raw_frame:  Original BGR frame — needed for appearance features.
+            det_frame: Output of the Phase 1 detector, containing per-frame
+                detections as a ``DetectionFrameSchema`` instance.
+            raw_frame: Original BGR image array for the current frame, required
+                by DeepSort to extract appearance (re-identification) features.
 
         Returns:
-            TrackedFrame with all confirmed tracks, dwell times, trajectories.
+            A ``TrackedFrame`` containing all confirmed tracks for this frame,
+            each with updated bounding boxes, dwell times, trajectories, zone
+            memberships, and track state.
+
+        Example:
+            >>> tracker = Tracker(fps=30, camera_id="cam_01")
+            >>> tracked_frame = tracker.update(det_frame, bgr_image)
+            >>> print(len(tracked_frame.tracks), "active tracks")
         """
         self._frame_id = det_frame.frame_id
         frames_processed_total.inc()
@@ -219,9 +243,9 @@ class Tracker:
 
             prev_traj = prev.trajectory if prev else []
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
-            
+
             # Merge old history, calculated mid-gap points, and current point cleanly
-            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN :]
+            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN:]
 
             obj = TrackedObject(
                 track_id=tid,
@@ -290,7 +314,7 @@ class Tracker:
                     del self._active_tracks[tid]
                     self._active_embeddings.pop(tid, None)
                     logger.info(f"Track DEAD: #{tid} after {prev_obj.dwell_time_seconds:.1f}s")
-                    
+
         # ── Cleanup expired ReID embeddings ──────────────────
         expired_ids = [
             tid
@@ -310,9 +334,24 @@ class Tracker:
         )
 
     def drain_lifecycle_events(self) -> list[TrackLifecycleEvent]:
-        """
-        Pop and return all pending lifecycle events since last call.
-        Called by the memory service to store BORN/LOST/DEAD events.
+        """Pop and return all pending lifecycle events accumulated since the last call.
+
+        Lifecycle events (BORN, LOST, DEAD) are queued internally each time
+        ``update()`` is called. This method atomically drains that queue so the
+        caller — typically the memory service — can persist or forward the events
+        without risk of processing the same event twice.
+
+        Args:
+            None
+
+        Returns:
+            A list of ``TrackLifecycleEvent`` objects in the order they were
+            emitted. Returns an empty list if no events have accumulated since
+            the previous call.
+
+        Example:
+            >>> for event in tracker.drain_lifecycle_events():
+            ...     redis_client.publish("track-events", event.json())
         """
         events = list(self._lifecycle_queue)
         self._lifecycle_queue.clear()
@@ -356,6 +395,34 @@ class Tracker:
 
 
 def main() -> None:
+    """Run the Phase 2 tracking pipeline as a standalone CLI demo.
+
+    Parses command-line arguments, instantiates a ``Detector`` and a
+    ``Tracker``, opens a video source (file or webcam), and displays
+    annotated frames in an OpenCV window. Lifecycle events are logged to
+    stdout; an optional MP4 output file can be written concurrently.
+
+    Args:
+        None — all configuration is read from ``sys.argv`` via ``argparse``.
+        Recognised flags:
+
+        * ``--source`` (str): Path to a video file or an integer webcam index.
+          Defaults to ``"0"`` (first webcam).
+        * ``--model`` (str): YOLO model identifier forwarded to ``Detector``.
+          Defaults to ``settings.detector_model``.
+        * ``--output`` (str | None): Optional filesystem path for the annotated
+          MP4 output. When omitted no file is written.
+
+    Returns:
+        None
+
+    Example:
+        .. code-block:: bash
+
+            python tracker.py --source data/sample_videos/sample.mp4 \\
+                               --model yolov8n.pt \\
+                               --output out/tracked.mp4
+    """
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -410,22 +477,59 @@ def main() -> None:
         writer.release()
     cv2.destroyAllWindows()
 
+
 def _interpolate_trajectory(
-    last_pos: dict, 
-    new_pos: dict, 
-    gap_frames: int, 
-    start_frame_id: int
+    last_pos: dict,
+    new_pos: dict,
+    gap_frames: int,
+    start_frame_id: int,
 ) -> list:
-    """Fills trajectory gaps using linear interpolation for temporary missed detections."""
+    """Fill trajectory gaps using linear interpolation for missed detections.
+
+    When a track is briefly occluded or missed by the detector, this function
+    synthesizes intermediate ``TrajectoryPoint``-compatible dicts by linearly
+    interpolating position (and optionally bounding-box size) between the last
+    known position and the next confirmed detection.
+
+    Args:
+        last_pos: Dict with keys ``'x'`` and ``'y'`` for the last confirmed
+            centre coordinates. May optionally include ``'w'`` and ``'h'``
+            for bounding-box dimensions to enable size interpolation.
+        new_pos: Dict with the same keys as ``last_pos`` representing the
+            newly detected centre (and optional size) at the end of the gap.
+        gap_frames: Number of frames that were missed between ``last_pos``
+            and ``new_pos``. Must be a positive integer; returns an empty
+            list immediately when zero or negative.
+        start_frame_id: Frame index assigned to the first synthesised point.
+            Subsequent points are numbered ``start_frame_id + 1``,
+            ``start_frame_id + 2``, and so on.
+
+    Returns:
+        A list of dicts, one per missed frame, each containing ``'x'``,
+        ``'y'``, ``'frame_id'``, and ``'interpolated': True``. When both
+        ``last_pos`` and ``new_pos`` supply ``'w'`` and ``'h'``, each dict
+        also includes interpolated ``'w'`` and ``'h'`` values. Returns an
+        empty list when ``gap_frames <= 0``.
+
+    Example:
+        >>> pts = _interpolate_trajectory(
+        ...     {"x": 100.0, "y": 200.0},
+        ...     {"x": 130.0, "y": 230.0},
+        ...     gap_frames=2,
+        ...     start_frame_id=45,
+        ... )
+        >>> [p["x"] for p in pts]
+        [110.0, 120.0]
+    """
     if gap_frames <= 0:
         return []
 
     interpolated_points = []
     total_steps = gap_frames + 1
-    
+
     x_step = (new_pos['x'] - last_pos['x']) / total_steps
     y_step = (new_pos['y'] - last_pos['y']) / total_steps
-    
+
     for i in range(1, gap_frames + 1):
         point = {
             "frame_id": start_frame_id + (i - 1),
@@ -433,14 +537,15 @@ def _interpolate_trajectory(
             "y": round(last_pos['y'] + (y_step * i), 2),
             "interpolated": True
         }
-        
+
         if all(k in last_pos and k in new_pos for k in ('w', 'h')):
             point['w'] = round(last_pos['w'] + (((new_pos['w'] - last_pos['w']) / total_steps) * i), 2)
             point['h'] = round(last_pos['h'] + (((new_pos['h'] - last_pos['h']) / total_steps) * i), 2)
-            
+
         interpolated_points.append(point)
-        
+
     return interpolated_points
+
 
 if __name__ == "__main__":
     main()

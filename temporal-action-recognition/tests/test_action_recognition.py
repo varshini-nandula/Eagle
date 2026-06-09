@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from libs.schemas.action_recognition import ActionLabel
 from libs.schemas.tracking import TrackedFrame, TrackedObject, TrajectoryPoint

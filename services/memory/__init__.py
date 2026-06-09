@@ -1,5 +1,8 @@
-"""Phase 3: Temporal Memory Service."""
-from services.memory.memory import MemoryStore
-from services.memory.pipeline import process_tracked_frame
+"""Phase 3: Temporal Memory Service.
 
-__all__ = ["MemoryStore", "process_tracked_frame"]
+Sub-modules are imported directly by consumers (e.g.
+``from services.memory.memory import MemoryStore``) so this __init__ stays
+lightweight to avoid pulling in heavy transitive deps (prometheus_client,
+confluent_kafka) during test collection.
+"""
+__all__: list[str] = []
