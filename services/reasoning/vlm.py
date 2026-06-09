@@ -198,10 +198,8 @@ def get_captioner(provider: str | None = None) -> BaseCaptioner:
     p = (provider or VLM_PROVIDER).lower()
     if p == "mock":
         return MockVLMCaptioner()
-
     if p == "ollama":
         return OllamaVLMCaptioner()
-
     if p == "qwen":
         return QwenVLCaptioner()
     raise ValueError(f"Unknown VLM_PROVIDER: '{p}'. "
