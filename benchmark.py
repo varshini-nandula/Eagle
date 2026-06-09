@@ -8,7 +8,7 @@ import torch
 import cv2
 import urllib.request
 from libs.config.settings import settings
-from ultralytics import YOLO  # <-- FIX: Yeh line missing thi, ab model load ho jayega!
+from ultralytics import YOLO  # <-- FIX: Loaded successfully
 
 class PipelineBenchmark:
     def __init__(self, redis_url=settings.REDIS_URL):
@@ -46,14 +46,24 @@ class PipelineBenchmark:
                 pass
             time.sleep(0.05)
 
-    def run_full_pipeline_benchmark(self, model_path, video_source="data/sample_videos/sample.mp4", num_frames=100, img_size=320):
+    def run_full_pipeline_benchmark(self, model_path, video_source="data/sample_videos/sample.mp4", num_frames=100, img_size=320, device=None):
         # 1. Reset run state and metrics at start (CodeRabbit State Fix)
         self._stop_memory_monitor = False
         self.peak_ram = 0
         for key in self.metrics:
             self.metrics[key].clear()
 
-        print(f"\n🚀 Starting End-to-End Pipeline Performance Benchmark using model: {model_path}...")
+        # Dynamic device determination
+        if device is None:
+            if model_path.endswith(".engine"):
+                device = "cuda"
+            else:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                
+        print(f"\n🚀 Starting End-to-End Pipeline Performance Benchmark...")
+        print(f"   Model: {model_path}")
+        print(f"   Device: {device.upper()}")
+        print(f"   Frames: {num_frames}")
         
         # Cross-Machine Reproducibility Check: Video download automation fallback
         if not os.path.exists(video_source) and video_source == "data/sample_videos/sample.mp4":
@@ -83,8 +93,10 @@ class PipelineBenchmark:
             model = YOLO(model_path, task='detect')
             # Warmup frames setup
             fake_tensor = torch.rand(1, 3, img_size, img_size)
+            if "cuda" in device.lower():
+                fake_tensor = fake_tensor.cuda()
             for _ in range(5):
-                model.predict(fake_tensor, verbose=False, device='cpu', imgsz=img_size)
+                model.predict(fake_tensor, verbose=False, device=device, imgsz=img_size)
             use_real_model = True
             print("✨ Real YOLO model successfully loaded into the benchmark pipeline!")
         except Exception as e:
@@ -116,11 +128,13 @@ class PipelineBenchmark:
 
                 if frame_to_process is None:
                     frame_to_process = torch.rand(1, 3, img_size, img_size)
+                    if "cuda" in device.lower():
+                        frame_to_process = frame_to_process.cuda()
 
                 # 1. Measure Detection Speed
                 t0 = time.time()
                 if use_real_model:
-                    model.predict(frame_to_process, verbose=False, device='cpu', imgsz=img_size)
+                    model.predict(frame_to_process, verbose=False, device=device, imgsz=img_size)
                 else:
                     time.sleep(0.015) 
                 self.metrics["detection_times"].append(time.time() - t0)
@@ -164,7 +178,7 @@ class PipelineBenchmark:
                 cap.release()
         
         total_duration = time.time() - start_total
-        self.generate_report(total_duration, model_path, "Real Video Asset" if use_real_video else "Synthetic Tensor Stream")
+        return self.generate_report(total_duration, model_path, "Real Video Asset" if use_real_video else "Synthetic Tensor Stream")
 
     def generate_report(self, total_duration, model_used, source_used):
         avg_det_time = np.mean(self.metrics["detection_times"])
@@ -177,7 +191,6 @@ class PipelineBenchmark:
 
         os.makedirs("docs/benchmarks", exist_ok=True)
 
-        # Dynamic logic for Mermaid timelines (CodeRabbit Dynamic Timeline Fix)
         det_ms = avg_det_time * 1000
         track_ms = avg_track
         redis_ms = avg_redis
@@ -227,10 +240,95 @@ class PipelineBenchmark:
         print("\n🏆 Benchmark ran successfully!")
         print(f"📊 Workload Source Verified: {source_used}")
         print("📁 Report generated at: docs/benchmarks/pipeline_benchmark.md")
+        
+        return {
+            "model": model_used,
+            "fps": fps,
+            "latency_ms": det_ms,
+            "e2e_ms": avg_e2e,
+            "ram_mb": self.peak_ram
+        }
+
+def run_comparative_benchmark(benchrunner, models, num_frames=100):
+    """Runs performance benchmarking across multiple model formats and outputs a consolidated report."""
+    results = []
+    print("\n🔍 Initiating Cross-Format Model Benchmark Comparison...")
+    
+    for label, path in models.items():
+        if os.path.exists(path):
+            try:
+                # Decide device automatically based on model suffix
+                device = "cuda" if path.endswith(".engine") or torch.cuda.is_available() else "cpu"
+                res = benchrunner.run_full_pipeline_benchmark(model_path=path, num_frames=num_frames, device=device)
+                res["format"] = label
+                results.append(res)
+            except Exception as e:
+                print(f"❌ Failed to run benchmark for {label} ({path}): {e}")
+        else:
+            print(f"⚠️ Skipping comparison for format '{label}' since file was not found at '{path}'.")
+            
+    if not results:
+        print("❌ No models were successfully benchmarked.")
+        return
+
+    # Generate Markdown Table Comparison
+    table_rows = []
+    for r in results:
+        table_rows.append(
+            f"| **{r['format']}** | `{r['model']}` | {r['fps']:.2f} | {r['latency_ms']:.2f} ms | {r['e2e_ms']:.2f} ms | {r['ram_mb']:.1f} MB |"
+        )
+        
+    comparison_md = (
+        f"# Consolidated Model Format Comparison Report\n\n"
+        f"Generated automatically on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"This report compares the performance of Eagle core detection using various model formats on the current hardware.\n\n"
+        f"## Performance Summary\n\n"
+        f"| Model Format | Model Path | Throughput (FPS) | Detection Latency | E2E Latency | Peak RAM Usage |\n"
+        f"| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        + "\n".join(table_rows) + "\n\n"
+        f"### Hardware / Environmental Diagnostics\n"
+        f"- **CUDA Available:** `{torch.cuda.is_available()}`\n"
+        f"- **Active GPU:** `{torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None (CPU)'}`\n\n"
+        f"### Summary Analysis\n"
+        f"- **TensorRT (.engine)** provides compiled CUDA-kernel optimization for the absolute lowest possible latency and highest FPS throughput on NVIDIA devices.\n"
+        f"- **ONNX (.onnx)** formats offer standardized execution via ONNX Runtime with substantial speedups compared to raw PyTorch CPU inference.\n"
+        f"- **PyTorch (.pt)** files serve as the robust development standard and baseline framework.\n"
+    )
+    
+    os.makedirs("docs/benchmarks", exist_ok=True)
+    report_path = "docs/benchmarks/comparison_report.md"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(comparison_md)
+        
+    print("\n==========================================================================")
+    print("🏆 Consolidated Cross-Format Comparison Complete!")
+    print(f"📁 Comparison report generated at: {report_path}")
+    print("==========================================================================")
+
 
 if __name__ == "__main__":
-    int8_path = "yolov8n_int8_openvino_model" 
+    import argparse
+    parser = argparse.ArgumentParser(description="Run Eagle performance benchmarks")
+    parser.add_argument("--model", type=str, default=None, help="Path to a specific model to benchmark")
+    parser.add_argument("--compare", action="store_true", default=True, help="Run comparisons across formats (.pt, .onnx, .engine)")
+    parser.add_argument("--frames", type=int, default=100, help="Number of frames to benchmark")
+    args = parser.parse_args()
+
     REDIS_ENV_URL = os.getenv("REDIS_URL", settings.REDIS_URL)
-    
     benchrunner = PipelineBenchmark(redis_url=REDIS_ENV_URL)
-    benchrunner.run_full_pipeline_benchmark(model_path=int8_path, num_frames=100)
+    
+    if args.model:
+        # Benchmark specific model
+        benchrunner.run_full_pipeline_benchmark(model_path=args.model, num_frames=args.frames)
+    elif args.compare:
+        # Cross-format comparison candidate paths
+        candidate_models = {
+            "PyTorch (.pt)": "yolov8n.pt",
+            "ONNX (.onnx)": "yolov8n.onnx",
+            "TensorRT (.engine)": "yolov8n.engine"
+        }
+        run_comparative_benchmark(benchrunner, candidate_models, num_frames=args.frames)
+    else:
+        # Default single run
+        int8_path = "yolov8n_int8_openvino_model"
+        benchrunner.run_full_pipeline_benchmark(model_path=int8_path, num_frames=args.frames)

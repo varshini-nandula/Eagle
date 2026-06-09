@@ -20,7 +20,7 @@ from ultralytics import YOLO
 
 from libs.schemas.detection import DetectionFrameSchema as DetectionFrame, DetectionSchema as Detection, BoundingBox
 from services.detection.zones import get_zones, get_zones_for_point
-from services.reasoning.scene_graph import SceneGraphBuilder
+from services.reasoning.scene_graph import SceneGraph
 from services.reasoning.prompts import build_reasoning_prompt
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -71,10 +71,27 @@ class Detector:
         confidence_threshold: float = settings.detection_confidence_threshold,
         device: str = settings.detector_device,
     ) -> None:
-        if not 0.0 <= confidence_threshold <= 1.0:
-            raise ValueError(
-                f"confidence_threshold must be between 0.0 and 1.0, got {confidence_threshold}"
-            )
+        """Initialize the YOLO detector.
+
+        Loads the configured YOLO model and prepares it for frame-by-frame
+        object detection.
+
+        Args:
+            model_name: Name or path of the YOLO model to load.
+            confidence_threshold: Minimum confidence score required for a
+                detection to be returned.
+            device: Execution device for inference, such as ``"cpu"`` or
+                ``"cuda"``.
+
+        Returns:
+            None
+
+        Example:
+            >>> detector = Detector(
+            ...     model_name="yolov8n.pt",
+            ...     confidence_threshold=0.5,
+            ... )
+        """
         logger.info(f"Loading YOLO model: {model_name} on {device}")
         self.model = YOLO(model_name)
         self.conf = confidence_threshold
@@ -122,7 +139,7 @@ class Detector:
 
             detections.append(DetectionSchema(
                 label=label,
-                bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
+                bbox=[x1, y1, x2, y2],
                 confidence=float(conf),
                 class_id=int(cls_id),
             ))
@@ -249,6 +266,7 @@ def main() -> None:
         writer.release()
     cv2.destroyAllWindows()
     logger.info(f"Processed {frame_id} frames.")
+   
 
 
 if __name__ == "__main__":

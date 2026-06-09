@@ -58,3 +58,37 @@ class MemoryStore:
         key = f"alerts:{camera_id}"
         items = self._r.zrevrange(key, 0, limit - 1)
         return [i if isinstance(i, str) else i.decode() for i in items]
+
+    def get_alert_by_id(self, alert_id: str) -> Optional[str]:
+        """Return the raw alert JSON for a given alert_id or None."""
+        # Scan recent alerts across camera sets — simple linear search
+        pattern = "alerts:*"
+        for key in self._r.keys(pattern):
+            items = self._r.zrange(key, 0, -1)
+            for raw in items:
+                raw_s = raw if isinstance(raw, str) else raw.decode()
+                try:
+                    payload = json.loads(raw_s)
+                    if payload.get("alert_id") == alert_id:
+                        return raw_s
+                except Exception:
+                    continue
+        return None
+
+    def store_feedback(self, alert_id: str, verdict: str, operator_id: str, notes: str, timestamp_ms: float) -> None:
+        """Store feedback as a Redis hash at key feedback:{alert_id}."""
+        key = f"feedback:{alert_id}"
+        self._r.hset(key, mapping={
+            "verdict": verdict,
+            "operator_id": operator_id,
+            "notes": notes,
+            "timestamp_ms": timestamp_ms,
+        })
+
+    def get_feedback(self, alert_id: str) -> Optional[str]:
+        """Return the verdict string for an alert, or None."""
+        key = f"feedback:{alert_id}"
+        if not self._r.exists(key):
+            return None
+        verdict = self._r.hget(key, "verdict")
+        return verdict if isinstance(verdict, str) else (verdict.decode() if verdict else None)

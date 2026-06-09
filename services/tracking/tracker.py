@@ -93,12 +93,23 @@ class Tracker:
             event_logger: Optional logger interface for tracking state lifecycle events.
             reid_similarity_threshold: Minimum confidence needed to reconnect an ID via ReID.
             max_interpolation_gap: Maximum frame gap size allowed to fill missing trajectories.
+
+        Returns:
+            None
+
+        Example:
+            >>> tracker = Tracker(
+            ...     fps=30,
+            ...     camera_id="cam_01",
+            ...     max_age=30,
+            ... )
         """
+
         self.fps = fps
         self.camera_id = camera_id
         self.max_age = max_age
         self.REID_SIMILARITY_THRESHOLD = reid_similarity_threshold
-        self.max_interpolation_gap = max_interpolation_gap  # Fixed missing attribute
+        self.max_interpolation_gap = max_interpolation_gap
 
         self._tracker = DeepSort(
             max_age=max_age,
@@ -119,15 +130,26 @@ class Tracker:
         det_frame: DetectionFrameSchema,
         raw_frame: np.ndarray,
     ) -> TrackedFrame:
-        """
-        Ingest a DetectionFrame, run ByteTrack, return TrackedFrame.
+        """Ingest a DetectionFrame, run ByteTrack, and return a TrackedFrame.
+
+        Converts Pydantic detection objects into DeepSort input format, runs
+        the tracker, performs ReID matching for re-appearing tracks, accumulates
+        trajectories with gap interpolation, computes dwell times, assigns zone
+        membership, and emits BORN/LOST/DEAD lifecycle events.
 
         Args:
             det_frame:  Output of Phase 1 detector (DetectionFrameSchema).
             raw_frame:  Original BGR frame – needed for appearance features.
 
         Returns:
-            TrackedFrame with all confirmed tracks, dwell times, trajectories.
+            A ``TrackedFrame`` containing all confirmed tracks for this frame,
+            each with updated bounding boxes, dwell times, trajectories, zone
+            memberships, and track state.
+
+        Example:
+            >>> tracker = Tracker(fps=30, camera_id="cam_01")
+            >>> tracked_frame = tracker.update(det_frame, bgr_image)
+            >>> print(len(tracked_frame.tracks), "active tracks")
         """
         self._frame_id = det_frame.frame_id
         frames_processed_total.inc()
@@ -178,29 +200,44 @@ class Tracker:
             y1 = float(ltwh[1])
             x2 = x1 + float(ltwh[2])
             y2 = y1 + float(ltwh[3])
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
 
-            zones = [z.name for z in get_zones_for_point(cx, cy)]
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+
+            matched_zones = get_zones_for_point(cx, cy)
+
+            ZONE_PRIORITY = {
+                "keypad_area": 2,
+                "restricted_door": 1,
+            }
+
+            matched_zones.sort(
+                key=lambda z: ZONE_PRIORITY.get(z.name, 0),
+                reverse=True,
+            )
+
+            zones = [z.name for z in matched_zones]
 
             if tid not in self._known_ids:
                 self._known_ids.add(tid)
-                self._emit_lifecycle(TrackState.BORN, tid, zones, 0.0)
-                logger.info(f"Track BORN: #{tid} in zones={zones}")
 
-            # ── Base Setup & Gap Calculation ──────────────────────────────
+                self._emit_lifecycle(
+                    TrackState.BORN,
+                    tid,
+                    zones,
+                    0.0,
+                )
+
+                logger.info(
+                    f"Track BORN: #{tid} in zones={zones}"
+                )
+
             prev = self._active_tracks.get(tid)
-            prev_traj = prev.trajectory if prev else []
-            
-            # Compute gap_frames early so both Dwell Time and Trajectory can use it
-            gap_frames = max(0, self._frame_id - prev.last_seen_frame - 1) if prev is not None else 0
 
-            # ── Dwell time ────────────────────────────────────────────────
-            if prev:
-                # Add historic frames, the current frame, and the occlusion gap
-                dwell_frames = prev.dwell_time_frames + 1 + gap_frames
-            else:
-                dwell_frames = 1
-            
+            dwell_frames = (
+                prev.dwell_time_frames + 1
+            ) if prev else 1
+
             dwell_secs = dwell_frames / self.fps
 
             prev_traj = prev.trajectory if prev else []
@@ -241,9 +278,9 @@ class Tracker:
             
             # Generate the current frame real point
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
-            
+
             # Merge old history, calculated mid-gap points, and current point cleanly
-            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN :]
+            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN:]
 
             obj = TrackedObject(
                 track_id=tid,
@@ -258,20 +295,29 @@ class Tracker:
                 zones_present=zones,
                 last_seen_frame=self._frame_id,
             )
+
             self._active_tracks[tid] = obj
-            current_ids.add(tid)
             tracked_objects.append(obj)
+
+            current_ids.add(tid)
 
         active_tracks.set(len(tracked_objects))
         for obj in tracked_objects:
             track_dwell_seconds.observe(obj.dwell_time_seconds)
 
         for tid, prev_obj in list(self._active_tracks.items()):
+
             if tid not in current_ids:
                 frames_since = self._frame_id - prev_obj.last_seen_frame
                 track = None
                 if frames_since == 1:
-                    track = next((t for t in raw_tracks if int(t.track_id) == tid), None)
+                    track = next(
+                        (
+                            t for t in raw_tracks
+                            if int(t.track_id) == tid
+                        ),
+                        None,
+                    )
 
                 embedding = None
                 if frames_since == 1:
@@ -302,7 +348,7 @@ class Tracker:
                     del self._active_tracks[tid]
                     self._active_embeddings.pop(tid, None)
                     logger.info(f"Track DEAD: #{tid} after {prev_obj.dwell_time_seconds:.1f}s")
-                    
+
         # ── Cleanup expired ReID embeddings ──────────────────
         expired_ids = [
             tid
@@ -447,22 +493,59 @@ def main() -> None:
         writer.release()
     cv2.destroyAllWindows()
 
+
 def _interpolate_trajectory(
-    last_pos: dict, 
-    new_pos: dict, 
-    gap_frames: int, 
-    start_frame_id: int
+    last_pos: dict,
+    new_pos: dict,
+    gap_frames: int,
+    start_frame_id: int,
 ) -> list:
-    """Fills trajectory gaps using linear interpolation for temporary missed detections."""
+    """Fill trajectory gaps using linear interpolation for missed detections.
+
+    When a track is briefly occluded or missed by the detector, this function
+    synthesizes intermediate ``TrajectoryPoint``-compatible dicts by linearly
+    interpolating position (and optionally bounding-box size) between the last
+    known position and the next confirmed detection.
+
+    Args:
+        last_pos: Dict with keys ``'x'`` and ``'y'`` for the last confirmed
+            centre coordinates. May optionally include ``'w'`` and ``'h'``
+            for bounding-box dimensions to enable size interpolation.
+        new_pos: Dict with the same keys as ``last_pos`` representing the
+            newly detected centre (and optional size) at the end of the gap.
+        gap_frames: Number of frames that were missed between ``last_pos``
+            and ``new_pos``. Must be a positive integer; returns an empty
+            list immediately when zero or negative.
+        start_frame_id: Frame index assigned to the first synthesised point.
+            Subsequent points are numbered ``start_frame_id + 1``,
+            ``start_frame_id + 2``, and so on.
+
+    Returns:
+        A list of dicts, one per missed frame, each containing ``'x'``,
+        ``'y'``, ``'frame_id'``, and ``'interpolated': True``. When both
+        ``last_pos`` and ``new_pos`` supply ``'w'`` and ``'h'``, each dict
+        also includes interpolated ``'w'`` and ``'h'`` values. Returns an
+        empty list when ``gap_frames <= 0``.
+
+    Example:
+        >>> pts = _interpolate_trajectory(
+        ...     {"x": 100.0, "y": 200.0},
+        ...     {"x": 130.0, "y": 230.0},
+        ...     gap_frames=2,
+        ...     start_frame_id=45,
+        ... )
+        >>> [p["x"] for p in pts]
+        [110.0, 120.0]
+    """
     if gap_frames <= 0:
         return []
 
     interpolated_points = []
     total_steps = gap_frames + 1
-    
+
     x_step = (new_pos['x'] - last_pos['x']) / total_steps
     y_step = (new_pos['y'] - last_pos['y']) / total_steps
-    
+
     for i in range(1, gap_frames + 1):
         point = {
             "frame_id": start_frame_id + (i - 1),
@@ -470,14 +553,15 @@ def _interpolate_trajectory(
             "y": round(last_pos['y'] + (y_step * i), 2),
             "interpolated": True
         }
-        
+
         if all(k in last_pos and k in new_pos for k in ('w', 'h')):
             point['w'] = round(last_pos['w'] + (((new_pos['w'] - last_pos['w']) / total_steps) * i), 2)
             point['h'] = round(last_pos['h'] + (((new_pos['h'] - last_pos['h']) / total_steps) * i), 2)
-            
+
         interpolated_points.append(point)
-        
+
     return interpolated_points
+
 
 if __name__ == "__main__":
     main()
