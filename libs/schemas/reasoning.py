@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
-import json
+from pydantic import BaseModel, Field, computed_field
 
 
 class ReasoningResult(BaseModel):
@@ -16,25 +15,21 @@ class ReasoningResult(BaseModel):
     severity_score: float                            = Field(0.0, ge=0.0, le=1.0)
     alert_id:       Optional[str]                    = None
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def confidence_tier(self) -> Literal["high", "medium", "low"]:
+        """Classify confidence into high/medium/low tiers for dashboard colour-coding."""
         if self.confidence >= 0.75:
             return "high"
-
         if self.confidence >= 0.50:
             return "medium"
-
         return "low"
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_actionable(self) -> bool:
+        """True when the alert warrants operator attention."""
         return self.label == "Suspicious" and self.confidence >= 0.65
-
-    def model_dump_json(self, **kw) -> str:
-        d = self.model_dump(**kw)
-        d["confidence_tier"] = self.confidence_tier
-        d["is_actionable"]   = self.is_actionable
-        return json.dumps(d, default=str)
 
 
 class GroundingResult(BaseModel):
