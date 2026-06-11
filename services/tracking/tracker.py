@@ -72,16 +72,6 @@ class Tracker:
         reid_similarity_threshold: float = 0.85,
         max_interpolation_gap: int = 10,  # Added with a sensible default
     ) -> None:
-        """Initialize the Tracker with DeepSort backend and internal state.
-
-        Args:
-            fps: Frames per second of the input stream.
-            max_age: Frames before a lost track is marked DEAD.
-            n_init: Frames before a track is CONFIRMED.
-            max_cosine_distance: ReID appearance distance threshold.
-            camera_id: Identifier for the camera feed.
-            event_logger: Optional logger for lifecycle events.
-            reid_similarity_threshold: Cosine similarity cutoff for ReID matching.
         """Initialize the tracker with DeepSort hyperparameters and interpolation constraints.
 
         Args:
@@ -139,7 +129,7 @@ class Tracker:
 
         Args:
             det_frame:  Output of Phase 1 detector (DetectionFrameSchema).
-            raw_frame:  Original BGR frame – needed for appearance features.
+            raw_frame:  Original BGR frame - needed for appearance features.
 
         Returns:
             A ``TrackedFrame`` containing all confirmed tracks for this frame,
