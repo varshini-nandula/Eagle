@@ -3,8 +3,9 @@ import json
 from typing import Optional
 
 from libs.schemas.memory import TrackEvent, TrackSequence
+from libs.config.settings import settings
 
-MAX_EVENTS_PER_TRACK = 50
+MAX_EVENTS_PER_TRACK = settings.max_events_per_track
 
 
 class MemoryStore:

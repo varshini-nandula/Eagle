@@ -4,61 +4,64 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Environment-backed connection / API settings
+    """Centralised configuration for the Eagle surveillance system.
+
+    Every field can be overridden via an environment variable of the same
+    (uppercased) name or via a ``.env`` file in the project root.
+    """
+
+    # ── Redis ─────────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379"
-    vlm_provider: str = "mock"
-    llm_provider: str = "mock"
-    ollama_host: str = "http://localhost:11434"
 
-    # YOLO / detection settings (kept for backward compatibility alongside existing names)
-    yolo_model: str = "yolov8n.pt"
-    detection_confidence: float = 0.4
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    # ── Memory / ring-buffer ──────────────────────────────────────────────
+    max_events_per_track: int = 50
+    track_ttl_seconds: int = 86_400  # 24 h
 
-    # Action classifier thresholds
+    # ── Action classifier thresholds ──────────────────────────────────────
     lingering_threshold_sec: float = 5.0
-    movement_threshold_px: float = 10.0
+    movement_threshold_px: float = 8.0
     near_keypad_dist_px: float = 80.0
-    keypad_center_x: int = 320
-    keypad_center_y: int = 240
-    policy_path: str = "policies/default.yaml"
+    keypad_center_x: float = 600.0
+    keypad_center_y: float = 280.0
+
+    # ── Detection ─────────────────────────────────────────────────────────
+    yolo_model: str = "yolov8n.pt"
     detector_model: str = "yolov8n.pt"
+    detection_confidence: float = 0.4
     detection_confidence_threshold: float = 0.45
     detector_device: str = "cpu"
+    confidence_threshold: float = 0.45
+
+    # ── Tracker ───────────────────────────────────────────────────────────
     tracker_fps: float = 30
     tracker_max_age: int = 30
     tracker_n_init: int = 3
     tracker_max_cosine_distance: float = 0.4
-    camera_id: str = "cam_01"
 
-    # Action classifier settings
-    lingering_threshold_sec: float = 5.0
-    movement_threshold_px: float = 15.0
-    near_keypad_dist_px: float = 75.0
-    keypad_center_x: float = 500.0
-    keypad_center_y: float = 500.0
+    # ── VLM / LLM providers ──────────────────────────────────────────────
+    vlm_provider: str = "mock"
+    llm_provider: str = "mock"
+    ollama_host: str = "http://localhost:11434"
 
-    # Reasoning trigger settings
+    # ── Reasoning / alerts ────────────────────────────────────────────────
     reasoning_dwell_threshold_seconds: float = 5.0
     reasoning_cooldown_seconds: float = 5.0
-
-    # New reasoning / alert settings
     reasoning_trigger_sec: float = 5.0
     ring_buffer_max: int = 50
     alert_dedup_window: int = 300
-    snapshot_dir: str = "/tmp/eagle_snapshots"
+
+    # ── Backend / API ─────────────────────────────────────────────────────
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
     cors_origins: list[str] = ["http://localhost:5173"]  # Vite dev
     max_alerts_page: int = 50
+    snapshot_dir: str = "/tmp/eagle_snapshots"
 
-    # Action classifier settings
-    lingering_threshold_sec: float = 10.0
-    movement_threshold_px: float = 5.0
-    near_keypad_dist_px: float = 80.0
-    keypad_center_x: float = 640.0
-    keypad_center_y: float = 360.0
+    # ── Policy ────────────────────────────────────────────────────────────
+    policy_path: str = "policies/default.yaml"
+    camera_id: str = "cam_01"
 
-    # Kafka Settings
+    # ── Kafka ─────────────────────────────────────────────────────────────
     use_kafka: bool = False
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "track-events"

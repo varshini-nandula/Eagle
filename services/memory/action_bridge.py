@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING
 
 from libs.schemas.action_recognition import ActionFrameResult, ActionPrediction
 from libs.schemas.memory import ActionHint, TrackEvent
+from libs.config.settings import settings
 
 if TYPE_CHECKING:
     from services.memory.memory import MemoryService
 
 logger = logging.getLogger(__name__)
 
-TRACK_TTL_SECONDS = 86_400
+TRACK_TTL_SECONDS = settings.track_ttl_seconds
 
 
 def _prediction_to_hint(pred: ActionPrediction) -> ActionHint:

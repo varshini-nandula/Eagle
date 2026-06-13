@@ -38,13 +38,14 @@ import numpy as np
 from libs.observability.metrics import redis_write_latency
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
 from libs.schemas.memory import TrackEvent, TrackSequence, ActionHint
+from libs.config.settings import settings
 from services.tracking.cross_camera_reid import CrossCameraReID
 
 logger = logging.getLogger(__name__)
 
-# ── Redis TTLs ────────────────────────────────────────────────────────────────
-TRACK_TTL_SECONDS = 86_400  # 24 h — keep per-track state for a full day
-EVENT_TTL_SECONDS = 86_400
+# ── Redis TTLs (sourced from centralised settings) ───────────────────────────
+TRACK_TTL_SECONDS = settings.track_ttl_seconds
+EVENT_TTL_SECONDS = settings.track_ttl_seconds
 
 # ── MemoryStore constants ─────────────────────────────────────────────────────
 MAX_EVENTS_PER_TRACK = 50   # ring-buffer cap per track_id
@@ -274,7 +275,9 @@ class MemoryService:
             )
 
 
-# ── MemoryStore ───────────────────────────────────────────────────────────────
+# Compatibility layer: lightweight event store used by tests and the pipeline.
+MAX_EVENTS_PER_TRACK = settings.max_events_per_track
+
 
 class MemoryStore:
     """
