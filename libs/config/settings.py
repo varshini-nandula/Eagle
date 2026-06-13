@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "track-events"
 
+    # Lifecycle logging
+    lifecycle_log_path: str = "data/logs/tracks.jsonl"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
