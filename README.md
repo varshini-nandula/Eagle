@@ -159,12 +159,12 @@ Eagle/
 │   │   ├── main.py
 │   │   ├── routes/
 │   │   └── tasks.py            # Celery async tasks
-│   └── frontend/               # Next.js dashboard
-│       ├── components/
-│       │   ├── VideoFeed.tsx
-│       │   ├── AlertPanel.tsx
-│       │   └── Timeline.tsx
-│       └── app/
+│   └── dashboard/              # React 19 + Vite dashboard
+│       ├── src/
+│       │   └── components/
+│       │       └── ZoneEditor.tsx
+│       ├── index.html
+│       └── vite.config.js
 │
 ├── services/
 │   ├── detection/
@@ -227,7 +227,7 @@ make demo      # run the demo
 | Command | Description |
 |---|---|
 | `make install` | Install backend dependencies |
-| `make install-frontend` | Install frontend npm dependencies |
+| `make install-frontend` | Install npm dependencies in apps/dashboard |
 | `make setup` | Full dev setup (backend + frontend) |
 | `make test` | Run pytest suite |
 | `make lint` | Run ruff and black checks |
@@ -298,12 +298,12 @@ API docs available at: `http://localhost:8000/docs`
 ### 8. Start the frontend
 
 ```bash
-cd apps/frontend
+cd apps/dashboard
 npm install
 npm run dev
 ```
 
-Dashboard at: `http://localhost:3000`
+Dashboard at: `http://localhost:5173`
 
 ---
 
