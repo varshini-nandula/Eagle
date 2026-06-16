@@ -350,6 +350,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 | Implement risk scoring algorithm | 🔴 Advanced | `AI/ML` |
 | Add ONNX INT8 quantization for YOLO | 🔴 Advanced | `optimization` |
 
+### 👥 Contributors
+
+Thanks to all contributors ❤️
+
+[![Contributors](https://contrib.rocks/image?repo=Devnil434/Eagle)](https://github.com/Devnil434/Eagle/graphs/contributors)
+
 ---
 
 ## ⚠️ Known Challenges
