@@ -39,6 +39,7 @@ from libs.observability.metrics import redis_write_latency
 from libs.schemas.tracking import TrackLifecycleEvent, TrackState
 from libs.schemas.memory import TrackEvent, TrackSequence, ActionHint
 from libs.config.settings import settings
+from services.memory.baseline import ZoneBaseline
 from services.tracking.cross_camera_reid import CrossCameraReID
 
 logger = logging.getLogger(__name__)
@@ -214,7 +215,12 @@ class MemoryService:
         raw = self._r.get(self._track_key(camera_id, track_id))
         return json.loads(raw) if raw else None
 
-    def _update_record(self, event: TrackLifecycleEvent, state: str) -> None:
+    def _update_record(
+        self,
+        event: TrackLifecycleEvent,
+        state: str,
+        anomalous: bool = False,
+    ) -> None:
         """
         Update an existing track record's state and timing fields in Redis.
 
@@ -308,17 +314,21 @@ class MemoryStore:
 
     # ── Key helpers ───────────────────────────────────────────────────────────
 
-    def _seq_key(self, track_id: int) -> str:
-        return f"seq:{self._camera_id}:{track_id}"
+    def _seq_key(self, track_id: int, camera_id: Optional[str] = None) -> str:
+        cam = camera_id or self._camera_id
+        return f"seq:{cam}:{track_id}"
 
-    def _zones_key(self, track_id: int) -> str:
-        return f"zones:{self._camera_id}:{track_id}"
+    def _zones_key(self, track_id: int, camera_id: Optional[str] = None) -> str:
+        cam = camera_id or self._camera_id
+        return f"zones:{cam}:{track_id}"
 
-    def _zone_count_key(self, track_id: int, zone: str) -> str:
-        return f"zone_count:{self._camera_id}:{track_id}:{zone}"
+    def _zone_count_key(self, track_id: int, zone: str, camera_id: Optional[str] = None) -> str:
+        cam = camera_id or self._camera_id
+        return f"zone_count:{cam}:{track_id}:{zone}"
 
-    def _active_key(self) -> str:
-        return f"active:{self._camera_id}"
+    def _active_key(self, camera_id: Optional[str] = None) -> str:
+        cam = camera_id or self._camera_id
+        return f"active:{cam}"
 
     def store_event(self, event) -> None:
         """
@@ -358,28 +368,23 @@ class MemoryStore:
         Returns:
             ``TrackSequence`` (empty if the track has no stored events).
         """
-        from libs.schemas.memory import TrackEvent
-
-        key = self._seq_key(track_id)
+        key = self._seq_key(track_id, camera_id)
         raw_list = self._r.lrange(key, -last_n, -1) if last_n else self._r.lrange(key, 0, -1)
-
-    def get_active_track_ids(self, camera_id: str) -> set[int]:
-        members = self._r.smembers(self._active_key(camera_id))
-        result: set[int] = set()
-        for m in members:
+        events: list[TrackEvent] = []
+        for raw in raw_list:
             try:
                 data = json.loads(raw if isinstance(raw, str) else raw.decode())
                 events.append(TrackEvent(**data))
             except Exception:
                 continue
 
-        zones_raw = self._r.smembers(self._zones_key(track_id))
+        zones_raw = self._r.smembers(self._zones_key(track_id, camera_id))
         zones_visited = [z if isinstance(z, str) else z.decode() for z in zones_raw]
         total_dwell = sum(e.dwell_time_seconds for e in events)
 
         return TrackSequence(
             track_id=track_id,
-            camera_id=self._camera_id,
+            camera_id=camera_id or self._camera_id,
             events=events,
             zones_visited=zones_visited,
             total_dwell=total_dwell,
@@ -387,20 +392,20 @@ class MemoryStore:
 
     def get_zone_entry_count(self, track_id: int, zone: str, camera_id: Optional[str] = None) -> int:
         """Return the number of times *track_id* has entered *zone*."""
-        raw = self._r.get(self._zone_count_key(track_id, zone))
+        raw = self._r.get(self._zone_count_key(track_id, zone, camera_id))
         if raw is None:
             return 0
         return int(raw if isinstance(raw, (int, str)) else raw.decode())
 
     def get_active_track_ids(self, camera_id: str) -> set[int]:
         """Return the set of track IDs currently marked active for *camera_id*."""
-        members = self._r.smembers(f"active:{camera_id}")
+        members = self._r.smembers(self._active_key(camera_id))
         return {int(m if isinstance(m, (int, str)) else m.decode()) for m in members}
 
     def expire_track(self, track_id: int, camera_id: Optional[str] = None) -> None:
         """Remove all stored data for *track_id* and deregister it as active."""
         pipe = self._r.pipeline()
-        pipe.delete(self._seq_key(track_id))
-        pipe.delete(self._zones_key(track_id))
-        pipe.srem(self._active_key(), str(track_id))
+        pipe.delete(self._seq_key(track_id, camera_id))
+        pipe.delete(self._zones_key(track_id, camera_id))
+        pipe.srem(self._active_key(camera_id), str(track_id))
         pipe.execute()
