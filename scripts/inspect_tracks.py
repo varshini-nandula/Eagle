@@ -21,7 +21,7 @@ from libs.config.settings import settings
 import redis
 
 DEFAULT_CAMERA_ID = "cam_01"
-DEFAULT_REDIS_URL = settings.REDIS_URL
+DEFAULT_REDIS_URL = settings.redis_url
 
 
 @dataclass

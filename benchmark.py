@@ -11,7 +11,7 @@ from libs.config.settings import settings
 from ultralytics import YOLO  # <-- FIX: Loaded successfully
 
 class PipelineBenchmark:
-    def __init__(self, redis_url=settings.REDIS_URL):
+    def __init__(self, redis_url=settings.redis_url):
         self.redis_url = redis_url
         self.metrics = {
             "detection_times": [],
@@ -314,7 +314,7 @@ if __name__ == "__main__":
     parser.add_argument("--frames", type=int, default=100, help="Number of frames to benchmark")
     args = parser.parse_args()
 
-    REDIS_ENV_URL = os.getenv("REDIS_URL", settings.REDIS_URL)
+    REDIS_ENV_URL = os.getenv("REDIS_URL", settings.redis_url)
     benchrunner = PipelineBenchmark(redis_url=REDIS_ENV_URL)
     
     if args.model:
