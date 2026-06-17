@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -22,7 +21,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from libs.schemas.tracking import TrackLifecycleEvent
 from services.action_recognition.inference import ActionRecognizer
 from services.detection.detection import Detector
 from services.memory.memory import MemoryService, MemoryStore

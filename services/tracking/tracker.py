@@ -1,5 +1,5 @@
 """
-tracker.py — Wraps deep-sort-realtime (ByteTrack-style) to assign persistent
+tracker.py – Wraps deep-sort-realtime (ByteTrack-style) to assign persistent
 track IDs to YOLO detections coming from Phase 1.
 
 Usage (standalone):
@@ -23,10 +23,9 @@ import cv2
 import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
-# ── adjust sys.path so we can import sibling packages ──────────────────────
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from libs.schemas.detection import DetectionFrameSchema
 from libs.schemas.tracking import (
@@ -59,14 +58,14 @@ class Tracker:
     - Lifecycle event emission (BORN / LOST / DEAD)
     """
 
-    MAX_TRAJECTORY_LEN = 80  # max trajectory points stored per track
+    MAX_TRAJECTORY_LEN = 80
     FPS_DEFAULT = 30
 
     def __init__(
         self,
         fps: float = FPS_DEFAULT,
-        max_age: int = 30,  # frames before a lost track is marked DEAD
-        n_init: int = 3,  # frames before a track is CONFIRMED
+        max_age: int = 30,
+        n_init: int = 3,
         max_cosine_distance: float = 0.4,
         camera_id: str = "cam_01",
         event_logger: TrackEventLogger | None = None,
@@ -84,12 +83,23 @@ class Tracker:
             event_logger: Optional logger interface for tracking state lifecycle events.
             reid_similarity_threshold: Minimum confidence needed to reconnect an ID via ReID.
             max_interpolation_gap: Maximum frame gap size allowed to fill missing trajectories.
+
+        Returns:
+            None
+
+        Example:
+            >>> tracker = Tracker(
+            ...     fps=30,
+            ...     camera_id="cam_01",
+            ...     max_age=30,
+            ... )
         """
+
         self.fps = fps
         self.camera_id = camera_id
-        self.max_age = max_age  # NEW
+        self.max_age = max_age
         self.REID_SIMILARITY_THRESHOLD = reid_similarity_threshold
-        self.max_interpolation_gap = max_interpolation_gap  # Fixed missing attribute
+        self.max_interpolation_gap = max_interpolation_gap
 
         self._tracker = DeepSort(
             max_age=max_age,
@@ -97,7 +107,6 @@ class Tracker:
             max_cosine_distance=max_cosine_distance,
             nn_budget=100,
         )
-        # Internal state
         self._active_tracks: dict[int, TrackedObject] = {}
         self._known_ids: set[int] = set()
         self._frame_id: int = 0
@@ -106,41 +115,46 @@ class Tracker:
         self._lost_embeddings: dict[int, dict] = {}
         self._active_embeddings: dict[int, np.ndarray] = {}
 
-    # ── Public API ──────────────────────────────────────────────────────────
-
     def update(
         self,
         det_frame: DetectionFrameSchema,
         raw_frame: np.ndarray,
     ) -> TrackedFrame:
-        """
-        Ingest a DetectionFrame, run ByteTrack, return TrackedFrame.
+        """Ingest a DetectionFrame, run ByteTrack, and return a TrackedFrame.
+
+        Converts Pydantic detection objects into DeepSort input format, runs
+        the tracker, performs ReID matching for re-appearing tracks, accumulates
+        trajectories with gap interpolation, computes dwell times, assigns zone
+        membership, and emits BORN/LOST/DEAD lifecycle events.
 
         Args:
             det_frame:  Output of Phase 1 detector (DetectionFrameSchema).
-            raw_frame:  Original BGR frame — needed for appearance features.
+            raw_frame:  Original BGR frame - needed for appearance features.
 
         Returns:
-            TrackedFrame with all confirmed tracks, dwell times, trajectories.
+            A ``TrackedFrame`` containing all confirmed tracks for this frame,
+            each with updated bounding boxes, dwell times, trajectories, zone
+            memberships, and track state.
+
+        Example:
+            >>> tracker = Tracker(fps=30, camera_id="cam_01")
+            >>> tracked_frame = tracker.update(det_frame, bgr_image)
+            >>> print(len(tracked_frame.tracks), "active tracks")
         """
         self._frame_id = det_frame.frame_id
         frames_processed_total.inc()
 
-        # ── Convert Pydantic detections → DeepSort input format ───────────
-        # DeepSort expects: list of ([left, top, w, h], confidence, label)
         ds_input = []
         for det in det_frame.detections:
-            if det.label != "person":  # track persons only in this phase
+            if det.label != "person":
                 continue
             b = det.bbox
             left, top = b.x1, b.y1
             w, h = b.x2 - b.x1, b.y2 - b.y1
             ds_input.append(([left, top, w, h], float(det.confidence), "person"))
 
-        # ── Run tracker ────────────────────────────────────────────────────
         raw_tracks = self._tracker.update_tracks(ds_input, frame=raw_frame)
 
-        # ── Build TrackedObject list ───────────────────────────────────────
         current_ids: set[int] = set()
         tracked_objects: list[TrackedObject] = []
 
@@ -150,7 +164,6 @@ class Tracker:
 
             tid = int(t.track_id)
 
-            # ── ReID matching ─────────────────────────────────────
             if hasattr(t, "features") and t.features:
                 new_embedding = t.features[-1]
                 self._active_embeddings[tid] = new_embedding
@@ -177,32 +190,47 @@ class Tracker:
             y1 = float(ltwh[1])
             x2 = x1 + float(ltwh[2])
             y2 = y1 + float(ltwh[3])
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
 
-            zones = [z.name for z in get_zones_for_point(cx, cy)]
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
 
-            # ── Lifecycle: BORN ───────────────────────────────────────────
+            matched_zones = get_zones_for_point(cx, cy)
+
+            ZONE_PRIORITY = {
+                "keypad_area": 2,
+                "restricted_door": 1,
+            }
+
+            matched_zones.sort(
+                key=lambda z: ZONE_PRIORITY.get(z.name, 0),
+                reverse=True,
+            )
+
+            zones = [z.name for z in matched_zones]
+
             if tid not in self._known_ids:
                 self._known_ids.add(tid)
-                self._emit_lifecycle(TrackState.BORN, tid, zones, 0.0)
-                logger.info(f"Track BORN: #{tid} in zones={zones}")
 
-            # ── Base Setup & Gap Calculation ──────────────────────────────
+                self._emit_lifecycle(
+                    TrackState.BORN,
+                    tid,
+                    zones,
+                    0.0,
+                )
+
+                logger.info(
+                    f"Track BORN: #{tid} in zones={zones}"
+                )
+
             prev = self._active_tracks.get(tid)
-            prev_traj = prev.trajectory if prev else []
-            
-            # Compute gap_frames early so both Dwell Time and Trajectory can use it
-            gap_frames = max(0, self._frame_id - prev.last_seen_frame - 1) if prev is not None else 0
 
-            # ── Dwell time ────────────────────────────────────────────────
-            if prev:
-                # Add historic frames, the current frame, and the occlusion gap
-                dwell_frames = prev.dwell_time_frames + 1 + gap_frames
-            else:
-                dwell_frames = 1
-            
+            dwell_frames = (
+                prev.dwell_time_frames + 1
+            ) if prev else 1
+
             dwell_secs = dwell_frames / self.fps
 
+            prev_traj = prev.trajectory if prev else []
             # ── Trajectory ────────────────────────────────────────────────
             interpolated_points = []
             max_gap = self.max_interpolation_gap  # <-- Replaced self.config string access
@@ -240,9 +268,9 @@ class Tracker:
             
             # Generate the current frame real point
             new_point = TrajectoryPoint(x=cx, y=cy, frame_id=self._frame_id)
-            
+
             # Merge old history, calculated mid-gap points, and current point cleanly
-            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN :]
+            trajectory = (prev_traj + interpolated_points + [new_point])[-self.MAX_TRAJECTORY_LEN:]
 
             obj = TrackedObject(
                 track_id=tid,
@@ -257,21 +285,29 @@ class Tracker:
                 zones_present=zones,
                 last_seen_frame=self._frame_id,
             )
+
             self._active_tracks[tid] = obj
-            current_ids.add(tid)
             tracked_objects.append(obj)
+
+            current_ids.add(tid)
 
         active_tracks.set(len(tracked_objects))
         for obj in tracked_objects:
             track_dwell_seconds.observe(obj.dwell_time_seconds)
 
-        # ── Lifecycle: LOST for tracks that disappeared ────────────────────
         for tid, prev_obj in list(self._active_tracks.items()):
+
             if tid not in current_ids:
                 frames_since = self._frame_id - prev_obj.last_seen_frame
                 track = None
                 if frames_since == 1:
-                    track = next((t for t in raw_tracks if int(t.track_id) == tid), None)
+                    track = next(
+                        (
+                            t for t in raw_tracks
+                            if int(t.track_id) == tid
+                        ),
+                        None,
+                    )
 
                 embedding = None
                 if frames_since == 1:
@@ -302,7 +338,7 @@ class Tracker:
                     del self._active_tracks[tid]
                     self._active_embeddings.pop(tid, None)
                     logger.info(f"Track DEAD: #{tid} after {prev_obj.dwell_time_seconds:.1f}s")
-                    
+
         # ── Cleanup expired ReID embeddings ──────────────────
         expired_ids = [
             tid
@@ -322,15 +358,22 @@ class Tracker:
         )
 
     def drain_lifecycle_events(self) -> list[TrackLifecycleEvent]:
-        """
-        Pop and return all pending lifecycle events since last call.
-        Called by the memory service to store BORN/LOST/DEAD events.
+        """Pop and return all pending lifecycle events since the last call.
+
+        Called by the memory service to consume BORN/LOST/DEAD events.
+
+        Returns:
+            List of TrackLifecycleEvent objects queued since the last drain.
+            Returns an empty list if no events are pending.
+
+        Example:
+            events = tracker.drain_lifecycle_events()
+            for evt in events:
+            memory_service.store(evt)
         """
         events = list(self._lifecycle_queue)
         self._lifecycle_queue.clear()
         return events
-
-    # ── Internal ────────────────────────────────────────────────────────────
 
     def _emit_lifecycle(
         self,
@@ -339,6 +382,14 @@ class Tracker:
         zones: list[str],
         dwell_secs: float,
     ) -> None:
+        """Create and queue a TrackLifecycleEvent, optionally logging it.
+
+        Args:
+            state: TrackState enum value (BORN, LOST, or DEAD).
+            track_id: Unique integer ID of the track.
+            zones: List of zone names the track currently occupies.
+            dwell_secs: Total dwell time in seconds for this track.
+        """
         event = TrackLifecycleEvent(
             event=state,
             track_id=track_id,
@@ -357,6 +408,15 @@ class Tracker:
         a: np.ndarray,
         b: np.ndarray,
     ) -> float:
+        """Compute cosine similarity between two embedding vectors.
+
+        Args:
+            a: First embedding vector as numpy array.
+            b: Second embedding vector as numpy array.
+
+        Returns:
+            Float in [0, 1] representing similarity; 0.0 if either norm is zero.
+        """
         norm_product = np.linalg.norm(a) * np.linalg.norm(b)
         if norm_product == 0:
             return 0.0
@@ -364,17 +424,19 @@ class Tracker:
         return float(np.dot(a, b) / norm_product)
 
 
-# ─── CLI Demo ────────────────────────────────────────────────────────────────
-
-
 def main() -> None:
+    """CLI entry point for the tracking demo on video or webcam.
+
+    Parses arguments, initializes Detector and Tracker, runs the pipeline,
+    and optionally writes annotated output to a video file.
+    """
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from services.detection.detector import Detector
     from services.tracking.visualizer import draw_tracks
 
-    parser = argparse.ArgumentParser(description="Phase 2 — Tracking demo")
+    parser = argparse.ArgumentParser(description="Phase 2 – Tracking demo")
     parser.add_argument("--source", default="0")
     parser.add_argument("--model", default=settings.detector_model, help="YOLO model name")
     parser.add_argument("--output", default=None)
@@ -403,14 +465,13 @@ def main() -> None:
         tracked_frame = tracker.update(det_frame, frame)
         annotated = draw_tracks(frame, tracked_frame)
 
-        # Drain lifecycle events (Phase 3 will store these in Redis)
         for evt in tracker.drain_lifecycle_events():
             logger.info(
                 f"Lifecycle: {evt.event} track #{evt.track_id} "
                 f"dwell={evt.dwell_time_seconds:.1f}s zones={evt.zones_present}"
             )
 
-        cv2.imshow("Agentic Vision — Tracking", annotated)
+        cv2.imshow("Agentic Vision – Tracking", annotated)
         if writer:
             writer.write(annotated)
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -422,22 +483,59 @@ def main() -> None:
         writer.release()
     cv2.destroyAllWindows()
 
+
 def _interpolate_trajectory(
-    last_pos: dict, 
-    new_pos: dict, 
-    gap_frames: int, 
-    start_frame_id: int
+    last_pos: dict,
+    new_pos: dict,
+    gap_frames: int,
+    start_frame_id: int,
 ) -> list:
-    """Fills trajectory gaps using linear interpolation for temporary missed detections."""
+    """Fill trajectory gaps using linear interpolation for missed detections.
+
+    When a track is briefly occluded or missed by the detector, this function
+    synthesizes intermediate ``TrajectoryPoint``-compatible dicts by linearly
+    interpolating position (and optionally bounding-box size) between the last
+    known position and the next confirmed detection.
+
+    Args:
+        last_pos: Dict with keys ``'x'`` and ``'y'`` for the last confirmed
+            centre coordinates. May optionally include ``'w'`` and ``'h'``
+            for bounding-box dimensions to enable size interpolation.
+        new_pos: Dict with the same keys as ``last_pos`` representing the
+            newly detected centre (and optional size) at the end of the gap.
+        gap_frames: Number of frames that were missed between ``last_pos``
+            and ``new_pos``. Must be a positive integer; returns an empty
+            list immediately when zero or negative.
+        start_frame_id: Frame index assigned to the first synthesised point.
+            Subsequent points are numbered ``start_frame_id + 1``,
+            ``start_frame_id + 2``, and so on.
+
+    Returns:
+        A list of dicts, one per missed frame, each containing ``'x'``,
+        ``'y'``, ``'frame_id'``, and ``'interpolated': True``. When both
+        ``last_pos`` and ``new_pos`` supply ``'w'`` and ``'h'``, each dict
+        also includes interpolated ``'w'`` and ``'h'`` values. Returns an
+        empty list when ``gap_frames <= 0``.
+
+    Example:
+        >>> pts = _interpolate_trajectory(
+        ...     {"x": 100.0, "y": 200.0},
+        ...     {"x": 130.0, "y": 230.0},
+        ...     gap_frames=2,
+        ...     start_frame_id=45,
+        ... )
+        >>> [p["x"] for p in pts]
+        [110.0, 120.0]
+    """
     if gap_frames <= 0:
         return []
 
     interpolated_points = []
     total_steps = gap_frames + 1
-    
+
     x_step = (new_pos['x'] - last_pos['x']) / total_steps
     y_step = (new_pos['y'] - last_pos['y']) / total_steps
-    
+
     for i in range(1, gap_frames + 1):
         point = {
             "frame_id": start_frame_id + (i - 1),
@@ -445,14 +543,15 @@ def _interpolate_trajectory(
             "y": round(last_pos['y'] + (y_step * i), 2),
             "interpolated": True
         }
-        
+
         if all(k in last_pos and k in new_pos for k in ('w', 'h')):
             point['w'] = round(last_pos['w'] + (((new_pos['w'] - last_pos['w']) / total_steps) * i), 2)
             point['h'] = round(last_pos['h'] + (((new_pos['h'] - last_pos['h']) / total_steps) * i), 2)
-            
+
         interpolated_points.append(point)
-        
+
     return interpolated_points
+
 
 if __name__ == "__main__":
     main()

@@ -71,51 +71,15 @@ It uses a multimodal AI pipeline to produce:
 
 ## 🏗️ System Architecture
 
-```
-┌─────────────────────────────────────┐
-│        CAMERA STREAM / VIDEO        │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   DETECTION SERVICE  (YOLOv8/v9)   │  services/detection/
-│   Person, Door, Keypad, Bag ...    │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   TRACKING SERVICE  (ByteTrack)    │  services/tracking/
-│   Person ID: #1, Trajectory, Age  │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   TEMPORAL MEMORY  (Redis Buffer)  │  services/memory/
-│   Last 50 events per track_id      │
-└──────────────────┬──────────────────┘
-                   │
-         ⚡ Event Trigger
-         (only on zone entry, not every frame)
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   VLM CAPTIONING  (LLaVA-Next)     │  services/reasoning/
-│   "Describe what person is doing"  │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   LLM REASONING LAYER              │
-│   Label: Suspicious / Normal       │
-│   Reason: Natural language text    │
-└──────────────────┬──────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────┐
-│   FASTAPI BACKEND  +  NEXT.JS UI   │  apps/
-│   REST API  |  Real-time Dashboard │
-└─────────────────────────────────────┘
-```
+Detailed pipeline documentation is available in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+The architecture covers:
+
+- Detection → Tracking → Temporal Memory → Reasoning pipeline
+- Event-triggered VLM execution
+- Redis memory design
+- FastAPI + Next.js integration
+- Full component and data-flow reference
 
 ### Service Breakdown
 
@@ -159,12 +123,12 @@ Eagle/
 │   │   ├── main.py
 │   │   ├── routes/
 │   │   └── tasks.py            # Celery async tasks
-│   └── frontend/               # Next.js dashboard
-│       ├── components/
-│       │   ├── VideoFeed.tsx
-│       │   ├── AlertPanel.tsx
-│       │   └── Timeline.tsx
-│       └── app/
+│   └── dashboard/              # React 19 + Vite dashboard
+│       ├── src/
+│       │   └── components/
+│       │       └── ZoneEditor.tsx
+│       ├── index.html
+│       └── vite.config.js
 │
 ├── services/
 │   ├── detection/
@@ -227,7 +191,7 @@ make demo      # run the demo
 | Command | Description |
 |---|---|
 | `make install` | Install backend dependencies |
-| `make install-frontend` | Install frontend npm dependencies |
+| `make install-frontend` | Install npm dependencies in apps/dashboard |
 | `make setup` | Full dev setup (backend + frontend) |
 | `make test` | Run pytest suite |
 | `make lint` | Run ruff and black checks |
@@ -278,8 +242,13 @@ ollama pull llava:latest
 ### 6. Run detection on a sample video
 
 ```bash
-python services/detection/detection.py --source data/sample_videos/sample.mp4
+python -m services.detection.detection --source data/sample_videos/sample.mp4
 ```
+### Detection Demo
+
+The following screenshot shows the object detection pipeline running with annotated bounding boxes.
+
+![Detection Output](docs/assets/detection-demo.png)
 
 ### 7. Start the backend API
 
@@ -293,12 +262,12 @@ API docs available at: `http://localhost:8000/docs`
 ### 8. Start the frontend
 
 ```bash
-cd apps/frontend
+cd apps/dashboard
 npm install
 npm run dev
 ```
 
-Dashboard at: `http://localhost:3000`
+Dashboard at: `http://localhost:5173`
 
 ---
 
@@ -380,6 +349,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 | Add Qwen-VL as alternative VLM backend | 🟡 Intermediate | `AI/ML` |
 | Implement risk scoring algorithm | 🔴 Advanced | `AI/ML` |
 | Add ONNX INT8 quantization for YOLO | 🔴 Advanced | `optimization` |
+
+### 👥 Contributors
+
+Thanks to all contributors ❤️
+
+[![Contributors](https://contrib.rocks/image?repo=Devnil434/Eagle)](https://github.com/Devnil434/Eagle/graphs/contributors)
 
 ---
 
