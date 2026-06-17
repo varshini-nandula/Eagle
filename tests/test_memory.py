@@ -7,6 +7,8 @@ from __future__ import annotations
 import sys
 import os
 import time
+import builtins
+import importlib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
@@ -46,6 +48,24 @@ def test_track_event_serialises_cleanly():
     evt = make_event(1, 0)
     assert evt.track_id == 1
     assert ActionHint.WALKING.value == "walking"
+
+
+def test_memory_import_does_not_require_cv2(monkeypatch):
+    """Importing memory service should not eagerly import cv2-dependent tracker."""
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise ModuleNotFoundError("No module named 'cv2'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.delitem(sys.modules, "services.tracking", raising=False)
+    monkeypatch.delitem(sys.modules, "services.tracking.tracker", raising=False)
+    monkeypatch.delitem(sys.modules, "services.memory.memory", raising=False)
+
+    imported = importlib.import_module("services.memory.memory")
+    assert hasattr(imported, "MemoryStore")
 
 
 def test_track_sequence_action_summary():
@@ -407,4 +427,3 @@ def test_reasoning_result_id_present_after_set(store):
     store.store_event(evt)
     seq = store.get_sequence(track_id=51)
     assert seq.events[0].reasoning_result_id == "test-alert-id-123"
-
