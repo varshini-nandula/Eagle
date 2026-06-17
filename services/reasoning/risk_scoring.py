@@ -136,8 +136,8 @@ class AdaptiveRiskScorer:
 
         return {
             "restricted_zone": 1.0 if restricted else 0.0,
-            "repeated_approach": min(approach_count / approach_max, 1.0) if approach_max > 0 else 0.0,
-            "loitering": min(dwell / loitering_max, 1.0) if loitering_max > 0 else 0.0,
+            "repeated_approach": max(0.0, min(approach_count / approach_max, 1.0)) if approach_max > 0 else 0.0,
+            "loitering": max(0.0, min(dwell / loitering_max, 1.0)) if loitering_max > 0 else 0.0,
             "after_hours": 1.0 if after_hours else 0.0,
             "reasoning_confidence": max(0.0, min(float(confidence), 1.0)),
         }
@@ -161,9 +161,16 @@ class AdaptiveRiskScorer:
         self, normalized: dict[str, float]
     ) -> list[str]:
         """Return human-readable labels for signals that contributed."""
+        # Confidence threshold for reporting — only flag genuinely high values
+        _CONFIDENCE_HIGH_THRESHOLD = 0.7
+
         factors: list[str] = []
         for key, value in normalized.items():
             if value > 0.0 and key in _FACTOR_LABELS:
+                # "High reasoning confidence" should only appear when
+                # confidence is genuinely high, not for any nonzero value.
+                if key == "reasoning_confidence" and value < _CONFIDENCE_HIGH_THRESHOLD:
+                    continue
                 factors.append(_FACTOR_LABELS[key])
         return factors
 
@@ -178,7 +185,8 @@ class AdaptiveRiskScorer:
         FileNotFoundError
             If *path* does not exist.
         ValueError
-            If the YAML is empty, unparseable, or missing required sections.
+            If the YAML is empty, unparseable, missing required sections,
+            or contains invalid weight / threshold values.
         """
         if not path.exists():
             raise FileNotFoundError(f"Risk policy file not found: {path}")
@@ -197,5 +205,25 @@ class AdaptiveRiskScorer:
                 raise ValueError(
                     f"Risk policy missing required section: '{section}'"
                 )
+
+        # Lightweight weight validation
+        for signal, cfg in data["risk_scoring"].items():
+            w = cfg.get("weight", 0)
+            if not isinstance(w, (int, float)) or w < 0:
+                raise ValueError(
+                    f"Weight for '{signal}' must be a non-negative number, got {w!r}"
+                )
+            if w > 1.0:
+                raise ValueError(
+                    f"Weight for '{signal}' must not exceed 1.0, got {w}"
+                )
+
+        # Risk-level threshold ordering
+        levels = data["risk_levels"]
+        if levels["low_max"] >= levels["medium_max"]:
+            raise ValueError(
+                f"risk_levels.low_max ({levels['low_max']}) must be less than "
+                f"medium_max ({levels['medium_max']})"
+            )
 
         return data

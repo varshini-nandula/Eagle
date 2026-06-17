@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 
 import asyncio
+import datetime
 import logging
 import time
 import uuid
@@ -232,11 +233,13 @@ class ReasoningPipeline:
             for z in seq.zones_visited
         )
 
-        # Count repeated approaches from the action summary
-        approach_count = seq.action_summary.count("repeated_approach")
+        # Count repeated approaches from structured event data
+        approach_count = sum(
+            1 for event in seq.events
+            if event.action_hint == ActionHint.REPEATED_APPROACH
+        )
 
         # Determine after-hours status from current wall-clock hour
-        import datetime
         current_hour = datetime.datetime.now().hour
         is_after_hours = current_hour >= 20 or current_hour < 6
 

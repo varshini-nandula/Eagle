@@ -171,3 +171,89 @@ def test_output_structure(scorer):
     assert all(isinstance(f, str) for f in result["risk_factors"])
     # Non-zero signals should produce factors
     assert len(result["risk_factors"]) > 0
+    # Confidence at threshold (0.7) should appear as a factor
+    assert "High reasoning confidence" in result["risk_factors"]
+
+
+# ── 6. Confidence factor threshold ───────────────────────────────────────────
+
+def test_confidence_factor_below_threshold(scorer):
+    """Low confidence (< 0.7) should NOT produce 'High reasoning confidence' factor."""
+    result = scorer.score({
+        "restricted_zone": False,
+        "repeated_approach": 0,
+        "loitering": 0.0,
+        "after_hours": False,
+        "reasoning_confidence": 0.5,
+    })
+    assert "High reasoning confidence" not in result["risk_factors"]
+    # Score should still reflect the confidence weight contribution
+    assert result["risk_score"] == round(0.10 * 0.5 * 100)
+
+
+# ── 7. Normalization clamping ─────────────────────────────────────────────────
+
+def test_negative_signal_clamped(scorer):
+    """Negative raw values are clamped to 0.0 during normalization."""
+    normalized = scorer._normalize_signals({
+        "loitering": -10.0,
+        "repeated_approach": -3,
+        "reasoning_confidence": -0.5,
+    })
+    assert normalized["loitering"] == 0.0
+    assert normalized["repeated_approach"] == 0.0
+    assert normalized["reasoning_confidence"] == 0.0
+
+
+# ── 8. Policy validation ─────────────────────────────────────────────────────
+
+def test_negative_weight_raises(tmp_path):
+    """Negative weight in policy raises ValueError."""
+    bad_policy = tmp_path / "bad.yaml"
+    bad_policy.write_text("""\
+risk_scoring:
+  restricted_zone:
+    weight: -0.30
+  repeated_approach:
+    weight: 0.25
+  loitering:
+    weight: 0.15
+  after_hours:
+    weight: 0.20
+  reasoning_confidence:
+    weight: 0.10
+risk_levels:
+  low_max: 40
+  medium_max: 70
+normalization:
+  loitering_max_seconds: 120.0
+  repeated_approach_max_count: 5
+""", encoding="utf-8")
+    with pytest.raises(ValueError, match="non-negative"):
+        AdaptiveRiskScorer(policy_path=bad_policy)
+
+
+def test_inverted_risk_levels_raises(tmp_path):
+    """low_max >= medium_max in policy raises ValueError."""
+    bad_policy = tmp_path / "bad.yaml"
+    bad_policy.write_text("""\
+risk_scoring:
+  restricted_zone:
+    weight: 0.30
+  repeated_approach:
+    weight: 0.25
+  loitering:
+    weight: 0.15
+  after_hours:
+    weight: 0.20
+  reasoning_confidence:
+    weight: 0.10
+risk_levels:
+  low_max: 70
+  medium_max: 40
+normalization:
+  loitering_max_seconds: 120.0
+  repeated_approach_max_count: 5
+""", encoding="utf-8")
+    with pytest.raises(ValueError, match="less than"):
+        AdaptiveRiskScorer(policy_path=bad_policy)
